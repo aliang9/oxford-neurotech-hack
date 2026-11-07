@@ -2,8 +2,12 @@
 
     python -m dance.train data/dance/p01_b*.csv --out models/p01.joblib
 
-1. Cut every block into 1.5 s windows (every 0.25 s) that lie fully inside
-   one trial, skipping the first 0.5 s after GO.
+1. Cut every block into 1.5 s windows (every 0.25 s). A window is kept if
+   at least --purity of it (default 2/3) belongs to one move, and gets that
+   move as its label. The first 0.5 s after each cue counts as no move
+   (reaction time). So windows that straddle a transition in a sequence
+   block are trained on, as the live decoder will see them; --purity 1
+   keeps only windows fully inside one segment.
 2. Leave-one-block-out evaluation: train on all blocks but one, test on it,
    repeat. Overlapping windows never end up on both sides of a split.
    A majority-class baseline is scored on the same folds.
@@ -33,6 +37,8 @@ def parse_args(argv=None):
     ap.add_argument("--holdout", type=int, nargs="+", default=[], metavar="BLOCK",
                     help="leave these blocks out entirely, e.g. to replay them with dance.live")
     ap.add_argument("--moves", nargs="+", default=None, help="only use these moves")
+    ap.add_argument("--purity", type=float, default=cfg.MIN_PURITY,
+                    help="fraction of a window that must be one move (default: %(default).2f)")
     return ap.parse_args(argv)
 
 
@@ -46,27 +52,43 @@ def block_number(path):
     return int(match.group(1)) if match else None
 
 
-def load_windows(paths, moves=None):
-    """Features X, labels y, block of each window, trial of each window."""
+def window_label(codes, trials, purity):
+    """(code, segment) of the move filling >= purity of a window, or (0, 0)."""
+    labelled = codes[codes > 0]
+    if not len(labelled):
+        return 0, 0
+    values, counts = np.unique(labelled, return_counts=True)
+    best = np.argmax(counts)
+    if counts[best] < purity * len(codes) - 1e-9:
+        return 0, 0
+    idx = np.flatnonzero(codes == values[best])
+    return values[best], trials[idx[len(idx) // 2]]
+
+
+def load_windows(paths, moves=None, purity=cfg.MIN_PURITY):
+    """Features X, labels y, block of each window, segment of each window."""
     X, y, blocks, trials = [], [], [], []
     for k, path in enumerate(paths):
         block = block_number(path) or k + 1
         data, _ = load_block(path)
         codes, trial = sample_labels(data[:, cfg.MARKER_CH], cfg.ONSET_SKIP_S)
-        n = 0
+        n = mixed = 0
         for start, win in windows(data):
-            end = start + cfg.WIN - 1
-            if not codes[start] or trial[start] != trial[end]:
-                continue  # not fully inside one trial
-            name = cfg.MOVES[codes[start]][0]
+            code, seg = window_label(codes[start:start + cfg.WIN],
+                                     trial[start:start + cfg.WIN], purity)
+            if not code:
+                continue
+            name = cfg.MOVES[code][0]
             if moves and name not in moves:
                 continue
             X.append(extract(win))
             y.append(name)
             blocks.append(block)
-            trials.append(f"{block}-{trial[start]}")
+            trials.append(f"{block}-{seg}")
             n += 1
-        print(f"{path}: block {block}, {trial.max()} trials, {n} windows")
+            mixed += not np.all(codes[start:start + cfg.WIN] == code)
+        print(f"{path}: block {block}, {trial.max()} segments, {n} windows "
+              f"({mixed} partly outside their segment)")
     if not X:
         raise SystemExit("No labelled windows found.")
     return np.array(X), np.array(y), np.array(blocks), np.array(trials)
@@ -106,7 +128,7 @@ def main(argv=None):
     paths = [p for p in args.files if block_number(p) not in args.holdout]
     if args.holdout:
         print(f"Holding out blocks {args.holdout}: not used for evaluation or training.")
-    X, y, blocks, trials = load_windows(paths, args.moves)
+    X, y, blocks, trials = load_windows(paths, args.moves, args.purity)
     names, counts = np.unique(y, return_counts=True)
     print(f"\n{len(y)} windows: " + ", ".join(f"{n} {c}" for n, c in zip(names, counts)))
 

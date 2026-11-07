@@ -34,6 +34,7 @@ WIN_S, STEP_S = 1.5, 0.25
 WIN = int(WIN_S * FS)              # 375 samples
 STEP = int(round(STEP_S * FS))     # 62 samples
 ONSET_SKIP_S = 0.5                 # ignore the reaction time after each cue
+MIN_PURITY = 1.0                  # training window: >= this fraction must be one move
 
 # Online decoding
 SMOOTH_ALPHA = 0.4   # weight of the newest probabilities in the moving average

@@ -161,8 +161,13 @@ with it still load, and its trials are skipped. Never reuse a retired code.
 **Features** (per 1.5 s window, every 0.25 s): only each channel's mean is removed, nothing
 else is filtered. Per channel: log RMS, log RMS of the first difference, and log band power at
 0.5–3 Hz (motion), 3–8, 8–13, 13–30, 30–45 and 55–95 Hz (EMG, skipping 50 Hz mains). Plus the
-28 channel-pair correlations. Training uses only windows that lie fully inside a trial,
-starting 0.5 s after GO.
+28 channel-pair correlations. The first 0.5 s after each cue counts as no move (reaction
+time). By default (`--purity 1`) training uses only windows that lie fully inside one segment.
+`--purity 0.67` also keeps windows that straddle a transition, labelled with the move that
+fills at least 2/3 of them, which is what the live decoder sees during transitions. On the
+two discrete blocks this made no clear difference (there, the edge windows are move + standing
+around a cue, not move → move); compare the two with the replay scores below once you have
+sequence blocks.
 
 **Evaluation.** Leave-one-block-out, so overlapping windows from one block are never in both
 train and test. It prints accuracy and macro-F1 for the random forest and the majority
