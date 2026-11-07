@@ -65,10 +65,13 @@ def load_block(path):
 
 
 def sample_labels(markers, skip_s=0.0):
-    """Per-sample move code and trial number (both 0 outside trials).
+    """Per-sample move code and segment number (both 0 outside segments).
 
-    A move code in the marker channel opens a trial, TRIAL_END closes it.
-    The first skip_s seconds of each trial are left unlabelled (reaction time).
+    Any marker code ends the current segment. A move code also starts a new
+    one, so a sequence (code, code, code, ..., TRIAL_END) gives back-to-back
+    segments, and a discrete trial (code, TRIAL_END) gives one. Codes not in
+    MOVES (e.g. retired moves) end a segment without starting one.
+    The first skip_s seconds of each segment are left unlabelled (reaction time).
     """
     m = np.rint(markers).astype(int)
     codes = np.zeros(len(m), int)
@@ -77,12 +80,22 @@ def sample_labels(markers, skip_s=0.0):
     onsets = np.flatnonzero((m != 0) & (m != previous))
     start, code, n = None, None, 0
     for i in onsets:
-        if m[i] in cfg.MOVES:
-            start, code = i, m[i]
-        elif m[i] == cfg.TRIAL_END and start is not None:
+        if start is not None:
             n += 1
             first = start + int(skip_s * cfg.FS)
             codes[first:i] = code
             trials[first:i] = n
             start = None
+        if m[i] in cfg.MOVES:
+            start, code = i, m[i]
     return codes, trials
+
+
+def segments(markers):
+    """[(first sample, end sample, code)] of every segment, cue onset to end."""
+    codes, trials = sample_labels(markers)
+    out = []
+    for t in range(1, trials.max() + 1):
+        idx = np.flatnonzero(trials == t)
+        out.append((int(idx[0]), int(idx[-1]) + 1, int(codes[idx[0]])))
+    return out

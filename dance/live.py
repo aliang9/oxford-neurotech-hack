@@ -24,7 +24,7 @@ import numpy as np
 
 from . import config as cfg
 from .features import extract, windows
-from .stream import LSLSource, ReplaySource, sample_labels
+from .stream import LSLSource, ReplaySource, sample_labels, segments
 
 
 class Decoder:
@@ -193,15 +193,12 @@ def run_dashboard(source, decoder, scale, discrete):
     grid.setRowStretch(2, 2)
 
     if isinstance(source, ReplaySource) and not discrete:  # draw the cued moves once
-        codes, _ = sample_labels(source.data[:, cfg.MARKER_CH])
         t = source.times - source.times[0]
-        edges = np.flatnonzero(np.diff(np.r_[0, codes, 0]))
         x0, width, brushes = [], [], []
-        for s, e in zip(edges[::2], edges[1::2]):
-            name = cfg.MOVES[codes[s]][0]
+        for s, e, code in segments(source.data[:, cfg.MARKER_CH]):  # back to back in sequences
             x0.append(t[s])
             width.append(t[e - 1] - t[s])
-            brushes.append(colors.get(name, pg.mkColor("#666")))
+            brushes.append(colors.get(cfg.MOVES[code][0], pg.mkColor("#666")))
         timeline.addItem(pg.BarGraphItem(x0=x0, width=width, y=[1] * len(x0), height=0.8,
                                          brushes=brushes))
 
