@@ -176,8 +176,21 @@ baseline, the confusion matrix, a per-class report and the top features.
 **Online, `--mode continuous`.** It runs the classifier every 0.25 s on the last 1.5 s and averages the probabilities
 (`SMOOTH_ALPHA`). The decoded move changes only after another move has been ≥ `THRESHOLD`
 for `MIN_DUR_S`. Each change is printed with its LSL timestamp. In replay it also scores the
-decoded sequence against the cues. `--no-gui` prints only the transitions, and `--speed 0`
-replays as fast as possible. The dashboard shows the raw EEG, per-channel quality
+decoded sequence against the cues:
+- *step accuracy*: decoded == cued, every 0.25 s
+- *segments detected*: the cued move was decoded at some point before the next cue
+- *latency*: from the cue to the first correct decode (median and 90th percentile)
+- *sequence accuracy*: 1 − edit distance / length between the decoded and cued order of
+  moves, ignoring stand still. This is the score for "did we get the dance right".
+
+`--no-gui` prints only the transitions, and `--speed 0` replays as fast as possible.
+
+`SMOOTH_ALPHA`, `THRESHOLD` and `MIN_DUR_S` trade latency for stability. On the two discrete
+blocks (train on one, replay the other) the defaults gave about 2.7 s median latency and
+0.58 sequence accuracy. Switching on every step (`MIN_DUR_S = 0`, `THRESHOLD = 0.35`) cut
+latency to about 1.6 s and nearly doubled step accuracy, but the extra false switches made sequence
+accuracy negative. So with the current defaults, hold a move for at least ~3 s when dancing
+live. Retune these on held-out sequence blocks. The dashboard shows the raw EEG, per-channel quality
 (meaningful only when still), the current move with its confidence, the probabilities, and
 the decoded and cued moves over time.
 

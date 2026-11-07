@@ -97,17 +97,58 @@ def classify_segment(model, samples):
     return [(model.classes_[i], float(probs[i])) for i in np.argsort(probs)[::-1]]
 
 
+def edit_distance(a, b):
+    """Levenshtein distance between two sequences."""
+    row = list(range(len(b) + 1))
+    for i, x in enumerate(a, 1):
+        prev, row[0] = row[0], i
+        for j, y in enumerate(b, 1):
+            prev, row[j] = row[j], min(row[j] + 1, row[j - 1] + 1, prev + (x != y))
+    return row[-1]
+
+
+def collapse(names):
+    """Drop rest and merge repeats: the order of the dance moves only."""
+    out = []
+    for n in names:
+        if n != "rest" and (not out or out[-1] != n):
+            out.append(n)
+    return out
+
+
 def replay_summary(decoder, source):
     """How well the decoded sequence matches the recorded cues."""
-    codes, trials = sample_labels(source.data[:, cfg.MARKER_CH], cfg.ONSET_SKIP_S)
+    markers = source.data[:, cfg.MARKER_CH]
+    codes, _ = sample_labels(markers, cfg.ONSET_SKIP_S)
     scored = [(cfg.MOVES[codes[n - 1]][0], move) for n, _, move, _ in decoder.history
               if codes[n - 1] and move]
     if not scored:
-        return print("\nNo labelled steps to score.")
+        return print("\nNo move was decoded during the cued segments: nothing to score.")
     accuracy = np.mean([true == move for true, move in scored])
-    print(f"\nReplay: {accuracy:.2f} of labelled steps decoded correctly "
-          f"({len(scored)} steps); {len(decoder.transitions)} transitions "
-          f"for {trials.max()} cued trials.")
+
+    # Per cued segment: was its move decoded before the next cue, and how late?
+    cued = [(s, e, cfg.MOVES[c][0]) for s, e, c in segments(markers)]
+    steps = np.array([n - 1 for n, _, _, _ in decoder.history])
+    moves = [m for _, _, m, _ in decoder.history]
+    lags = []
+    for k, (s, e, name) in enumerate(cued):
+        stop = cued[k + 1][0] if k + 1 < len(cued) else len(markers)
+        hit = [i for i in np.flatnonzero((steps >= s) & (steps < stop)) if moves[i] == name]
+        lags.append((steps[hit[0]] - s) / cfg.FS if hit else None)
+    found = [x for x in lags if x is not None]
+
+    true_seq = collapse(name for _, _, name in cued)
+    decoded_seq = collapse(move for _, move, _ in decoder.transitions)
+    seq_acc = 1 - edit_distance(true_seq, decoded_seq) / max(len(true_seq), 1)
+
+    print(f"\nReplay ({len(scored)} labelled steps, {len(cued)} cued segments):")
+    print(f"  step accuracy      {accuracy:.2f}   (decoded move == cued move, every 0.25 s)")
+    print(f"  segments detected  {len(found) / len(cued):.2f}   (cued move decoded before the next cue)")
+    if found:
+        print(f"  latency            {np.median(found):.2f} s median, "
+              f"{np.percentile(found, 90):.2f} s 90th pct   (cue -> decoded)")
+    print(f"  sequence accuracy  {seq_acc:.2f}   (1 - edit distance / length, rest ignored; "
+          f"{len(decoded_seq)} decoded vs {len(true_seq)} cued moves)")
     print("If this was a training block, the score is optimistic: use --holdout in dance.train.")
 
 
