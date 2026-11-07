@@ -5,6 +5,10 @@ At cue onset the task's code is sent as UDP text to acquire.py's
 UDPReceiver. gpype stamps it on its own timeline and records it as a
 trigger channel next to the EEG. A schedule CSV is also written.
 
+Before starting, it checks signal quality on acquire.py's LSL stream (see
+quality.py) and refuses to run if any channel is bad. Run calibrate.py to
+fix it, or pass --skip-check. Channel status is shown again at each break.
+
 Keys: Space = start / continue after a break, Esc = abort.
 """
 
@@ -17,6 +21,8 @@ import sys
 import time
 
 from PySide6 import QtCore, QtGui, QtWidgets
+
+import quality
 
 # code: (name, instruction). Codes are stable; decode.py reads them from here.
 TASKS = {
@@ -46,6 +52,10 @@ def parse_args(argv=None):
     ap.add_argument("--log", default=None, help="schedule CSV (default: tasks_<time>.csv)")
     ap.add_argument("--windowed", action="store_true", help="don't go full screen")
     ap.add_argument("--autostart", action="store_true", help="start without waiting for Space")
+    ap.add_argument("--stream-name", default="core8_eeg", help="acquire.py's LSL stream, for the check")
+    ap.add_argument("--ignore", nargs="+", default=[], metavar="CH",
+                    help="channels the signal check should ignore")
+    ap.add_argument("--skip-check", action="store_true", help="start without the signal check")
     return ap.parse_args(argv)
 
 
@@ -61,9 +71,10 @@ def make_schedule(tasks, trials, seed=None):
 
 class Cues(QtWidgets.QLabel):
 
-    def __init__(self, args):
+    def __init__(self, args, monitor=None):
         super().__init__()
         self.args = args
+        self.monitor = monitor
         self.rng = random.Random(args.seed)
         self.schedule = make_schedule(args.tasks, args.trials, args.seed)
         self.i = 0
@@ -109,9 +120,18 @@ class Cues(QtWidgets.QLabel):
         if self.i and self.i % self.args.break_every == 0 and self.last_break != self.i:
             self.waiting, self.last_break = True, self.i
             return self.show_text(f"Break ({self.i}/{len(self.schedule)} done).\n\n"
-                                  "Press Space to continue.")
+                                  f"{self.channel_status()}Press Space to continue.")
         self.show_text("+")
         self.after(self.rng.uniform(*self.args.rest), self.cue)
+
+    def channel_status(self):
+        """One line per channel that is no longer good, for the break screen."""
+        if self.monitor is None:
+            return ""
+        rows = self.monitor.assess(ignore=self.args.ignore)
+        print(f"Signal check at trial {self.i}:\n{quality.format_table(rows)}")
+        bad = [f"{r['label']}: {r['status']}" for r in rows if r["status"] in ("warn", "bad")]
+        return ("Check electrodes: " + ", ".join(bad) + "\n\n") if bad else "All channels good.\n\n"
 
     def after(self, seconds, fn):
         t = QtCore.QTimer(self, singleShot=True, timerType=QtCore.Qt.PreciseTimer)
@@ -144,10 +164,28 @@ class Cues(QtWidgets.QLabel):
         QtCore.QTimer.singleShot(1500, QtWidgets.QApplication.quit)
 
 
+def signal_check(args):
+    """Refuse to start on a bad channel. Returns the monitor, reused at breaks."""
+    try:
+        monitor = quality.QualityMonitor(args.stream_name, buffer=10.0, timeout=5.0)
+    except RuntimeError as e:
+        sys.exit(f"{e} Start it first, or pass --skip-check.")
+    print("Checking signal quality (5 s)...")
+    rows = monitor.assess(ignore=args.ignore)
+    print(quality.format_table(rows))
+    if not quality.ok(rows, strict=False):
+        sys.exit("Signal check failed: fix the red channels with calibrate.py "
+                 "(or --ignore them, or --skip-check).")
+    if not quality.ok(rows):
+        print("Some channels are only fair (yellow). Starting anyway.")
+    return monitor
+
+
 def main(argv=None):
     args = parse_args(argv)
+    monitor = None if args.skip_check else signal_check(args)
     app = QtWidgets.QApplication(sys.argv[:1])
-    w = Cues(args)
+    w = Cues(args, monitor)
     w.resize(1000, 700)
     w.show() if args.windowed else w.showFullScreen()
     app.exec()
