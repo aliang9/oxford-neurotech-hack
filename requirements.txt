@@ -4,3 +4,5 @@ pylsl
 numpy
 scipy
 scikit-learn
+joblib        # dance/: saving and loading models
+pyqtgraph     # dance/live.py dashboard

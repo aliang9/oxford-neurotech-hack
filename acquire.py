@@ -1,7 +1,8 @@
 """Stream a g.tec BCI Core-8 into a live scope, LSL and (optionally) a file.
 
     BCICore ------+-> Router -+-> HDF5Writer (raw EEG + markers)    [--record]
-    UDPReceiver --+  (markers)+-> 50 Hz notch -> 1-40 Hz bandpass -+-> TimeSeriesScope
+    UDPReceiver --+  (markers)+-> LSLSender "core8_raw" (unfiltered, for dance/)
+                              +-> 50 Hz notch -> 1-40 Hz bandpass -+-> TimeSeriesScope
                                                                    +-> LSLSender "core8_eeg"
     BCICore's accelerometer/gyroscope -> LSL "core8_motion"         (see motion.py)
 
@@ -30,6 +31,8 @@ def parse_args(argv=None):
                     help="headset serial, e.g. U8-xxxx.xx.xx (default: first one found)")
     ap.add_argument("--stream-name", default="core8_eeg",
                     help="LSL stream name for filtered EEG + markers (default: core8_eeg)")
+    ap.add_argument("--raw-stream", default="core8_raw",
+                    help="LSL stream name for unfiltered EEG + markers (default: core8_raw)")
     ap.add_argument("--motion-stream", default="core8_motion",
                     help="LSL stream name for accelerometer/gyroscope (default: core8_motion)")
     ap.add_argument("--mains", type=float, default=50.0,
@@ -74,21 +77,24 @@ def main(argv=None):
         amplitude_limit=50, time_window=10, hidden_channels=[EEG_CHANNELS],
         markers=[gp.TimeSeriesScope.Markers(color=c, label=str(v),
                                             channel=EEG_CHANNELS, value=v)
-                 for v, c in zip(range(1, 10), "rgbcmyrgb")])
+                 for v, c in zip([*range(1, 10), *range(11, 18), 99], "rgbcmyrgbrgbcmygw")])
     lsl = gp.LSLSender(stream_name=args.stream_name)
+    raw_lsl = gp.LSLSender(stream_name=args.raw_stream)  # dance/ needs motion + EMG unfiltered
 
     p.connect(source, with_markers["in1"])
     p.connect(markers, with_markers["in2"])
     if args.record:
         os.makedirs(os.path.dirname(args.record) or ".", exist_ok=True)
         p.connect(with_markers, gp.HDF5Writer(file_name=args.record))
+    p.connect(with_markers, raw_lsl)
     p.connect(with_markers, notch)
     p.connect(notch, bandpass)
     p.connect(bandpass, scope)
     p.connect(bandpass, lsl)
     app.add_widget(scope)
 
-    print(f"Streaming filtered EEG + markers on LSL as '{args.stream_name}'; "
+    print(f"Streaming filtered EEG + markers on LSL as '{args.stream_name}', "
+          f"unfiltered as '{args.raw_stream}'; "
           f"markers on UDP port {args.marker_port}"
           + (f"; recording to {args.record}" if args.record else "")
           + ". Close the scope window to stop.", flush=True)

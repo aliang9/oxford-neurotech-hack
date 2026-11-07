@@ -14,6 +14,7 @@ BCICore ────────────────┴─> Router ─┬─
 calibrate.py / tasks.py check:  LSL "core8_eeg" ─> per-channel amplitude, drift, muscle ─> pass/fail
 decode.py:  HDF5 ─> zero-phase filters ─> epochs per task ─> band power ─> LDA + cross-validation
 receive.py: any LSL stream ─> per-channel mean/std every second (+ optional CSV)
+dance/:     LSL "core8_raw" (unfiltered) ─> block CSVs ─> window features ─> random forest ─> live moves
 ```
 
 | file | what it does |
@@ -25,6 +26,7 @@ receive.py: any LSL stream ─> per-channel mean/std every second (+ optional CS
 | `tasks.py` | full-screen task cues, randomised trials, sends markers to `acquire.py`; refuses to start on bad channels |
 | `decode.py` | offline decoding of the recorded tasks, with chance level and a permutation test |
 | `receive.py` | standalone pylsl reader, e.g. for checking streams or saving them to CSV |
+| `dance/` | dance-move classifier: record, train, decode live with a dashboard (see below) |
 
 ## Setup
 
@@ -98,6 +100,83 @@ Switch on the headset. g.Pype finds it by BLE scan, so you do not pair it in Sys
   tasks, suspect artifacts. Keep cues short and have the participant fixate and stay still.
 - **Aim for ≥ 30 clean trials per class.** With 15 per class, accuracies swing a lot, so
   rely on the permutation p-value.
+
+## Dance-move classifier (`dance/`)
+
+This classifies 7 moves from movement artifacts and EMG, the opposite of what the rest of the
+repo tries to do. It uses the unfiltered `core8_raw` stream, because the 1–40 Hz filter on
+`core8_eeg` removes both slow head motion and EMG. The motion stream is not used.
+
+| file | what it does |
+|---|---|
+| `dance/config.py` | moves, window sizes and online settings. **Add or remove a move here.** |
+| `dance/stream.py` | sources: live LSL or replay of a recorded CSV (same interface), and labels from markers |
+| `dance/record.py` | full-screen cues for one block; writes `data/dance/<subject>_b<block>.csv` |
+| `dance/features.py` | per-window features, shared by training and live |
+| `dance/train.py` | leave-one-block-out evaluation against a majority baseline, then saves the model |
+| `dance/live.py` | decoding (Space start/stop by default, or continuous) with the dashboard |
+
+```bash
+# Terminal 1, whole session (the HDF5 is a backup; dance/ records its own CSVs)
+.venv/bin/python acquire.py --record data/dance/p01.h5
+# Terminal 2: contact check while sitting still, then one block (~4.5 min); repeat for blocks 2..5
+.venv/bin/python calibrate.py --no-alpha
+.venv/bin/python -m dance.record --subject p01 --block 1
+# Train (after 2 blocks already, to check the moves are separable at all)
+.venv/bin/python -m dance.train data/dance/p01_b*.csv --out models/p01.joblib
+# Decode live: Space to start, Space to stop -> top move
+.venv/bin/python -m dance.live --model models/p01.joblib
+# Continuous decoding, live or replaying a block the model has not seen
+.venv/bin/python -m dance.live --model models/p01.joblib --mode continuous
+.venv/bin/python -m dance.train data/dance/p01_b*.csv --holdout 5 --out models/p01_no5.joblib
+.venv/bin/python -m dance.live --model models/p01_no5.joblib --mode continuous --replay data/dance/p01_b5.csv
+```
+
+**Recording.** A trial is rest (2–3 s), then "Next: MOVE" (1 s), then GO (beep, 4 s of
+dancing), then STOP (beep). Each block has 5 reps of every move in shuffled order. Five blocks
+give 25 reps per move. The marker codes (11–17, end = 99) travel over UDP into
+`acquire.py`, so they sit in channel 9 of the same stream as the EEG. The CSV is
+`time, Fz..PO8, marker`, with the time on gpype's clock. At the end, the recorder prints the
+sample rate and the number of trials it found per move.
+
+**Features** (per 1.5 s window, every 0.25 s): only each channel's mean is removed, nothing
+else is filtered. Per channel: log RMS, log RMS of the first difference, and log band power at
+0.5–3 Hz (motion), 3–8, 8–13, 13–30, 30–45 and 55–95 Hz (EMG, skipping 50 Hz mains). Plus the
+28 channel-pair correlations. Training uses only windows that lie fully inside a trial,
+starting 0.5 s after GO.
+
+**Evaluation.** Leave-one-block-out, so overlapping windows from one block are never in both
+train and test. It prints accuracy and macro-F1 for the random forest and the majority
+baseline, the confusion matrix, a per-class report and the top features.
+
+**Online, `--mode continuous`.** It runs the classifier every 0.25 s on the last 1.5 s and averages the probabilities
+(`SMOOTH_ALPHA`). The decoded move changes only after another move has been ≥ `THRESHOLD`
+for `MIN_DUR_S`. Each change is printed with its LSL timestamp. In replay it also scores the
+decoded sequence against the cues. `--no-gui` prints only the transitions, and `--speed 0`
+replays as fast as possible. The dashboard shows the raw EEG, per-channel quality
+(meaningful only when still), the current move with its confidence, the probabilities, and
+the decoded and cued moves over time.
+
+**Online, `--mode discrete` (the default).** Press Space to start, dance, then press Space
+again to stop. The captured stretch is cut into the same 1.5 s windows as in training and their
+probabilities are averaged. The dashboard shows the top move and all the probabilities. The
+terminal prints the top three with the capture's LSL start and stop times. A capture needs
+at least 1.5 s. This mode needs the dashboard, so `--no-gui` works only with
+`--mode continuous`.
+
+**Check on the device before collecting data.** None of this has been run on the headset.
+- `receive.py --stream-name core8_raw` should show 9 channels at about 250 samples/s. This
+  checks that a second gpype `LSLSender` on the unfiltered Router output works.
+- Shake your head and check the raw units, DC offset and saturation in the mean/std output.
+- Record a short block (`--reps 1`). The summary should show about 250 samples/s, which
+  rules out Bluetooth dropouts while dancing, and one trial per move, which shows that
+  codes above 9 pass through `UDPReceiver`.
+- The LSL timestamps are gpype's `time.monotonic()`. Don't mix them with
+  `pylsl.local_clock()`.
+
+**Without the headset:** `acquire.py --simulate`, then `dance.record --subject sim --block 1
+--reps 2 --skip-check` (twice, blocks 1 and 2), then `dance.train`. It should score near
+chance, which shows the whole chain runs.
 
 ## Calibration: getting every electrode recording properly
 
