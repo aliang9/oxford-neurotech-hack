@@ -33,7 +33,7 @@ MARKER_PORT = 5005
 WIN_S, STEP_S = 1.5, 0.25
 WIN = int(WIN_S * FS)              # 375 samples
 STEP = int(round(STEP_S * FS))     # 62 samples
-ONSET_SKIP_S = 0.5                 # ignore the reaction time after each GO cue
+ONSET_SKIP_S = 0.5                 # ignore the reaction time after each cue
 
 # Online decoding
 SMOOTH_ALPHA = 0.4   # weight of the newest probabilities in the moving average

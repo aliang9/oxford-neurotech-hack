@@ -1,11 +1,25 @@
 """Record one block of cued dance moves to CSV.
 
-    python -m dance.record --subject p01 --block 1
+    python -m dance.record --subject p01 --block 3                        # sequences (default)
+    python -m dance.record --subject p01 --block 3 --protocol discrete    # one move per trial
 
 Needs acquire.py running (it publishes core8_raw and receives the markers).
 
-Each trial:  rest (+) -> "Next: MOVE" preview -> GO (beep, move code sent)
-             -> dance for --duration s -> STOP (beep, 99 sent).
+--protocol sequence (default): moves are chained the way they are danced
+live. Each sequence is --seq-len moves back to back, each lasting a random
+--segment MIN..MAX seconds, with no break in between:
+
+    break (+) -> "Next: MOVE" -> GO MOVE (beep, code) -> ... "then: MOVE2"
+              -> MOVE2 (beep, code) -> ... -> STOP (beep, 99) -> break ...
+
+The last --preview seconds of each move show what comes next, so the
+dancer flows into it. Every move appears --reps times per block, never
+twice in a row, so the block has transitions between all kinds of moves.
+
+--protocol discrete: the original trials, each a single move from rest:
+rest (+) -> "Next: MOVE" -> GO (beep, code) -> --duration s -> STOP (beep, 99).
+
+In both, the dancer keeps repeating the move until the cue changes.
 
 The markers go to acquire.py over UDP, which puts them in the marker channel
 of the same LSL stream as the EEG, so labels and samples are aligned without
@@ -17,6 +31,7 @@ Keys: Space = start, Esc = abort.
 
 import argparse
 import csv
+import html
 import os
 import random
 import socket
@@ -28,7 +43,7 @@ import types
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import config as cfg
-from .stream import LSLSource, load_block, sample_labels
+from .stream import LSLSource, load_block, segments
 
 NAMES = {name: code for code, (name, _) in cfg.MOVES.items()}
 
@@ -37,11 +52,23 @@ def parse_args(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--subject", required=True)
     ap.add_argument("--block", type=int, required=True)
+    ap.add_argument("--protocol", choices=["sequence", "discrete"], default="sequence")
     ap.add_argument("--reps", type=int, default=5, help="repetitions per move (default: 5)")
     ap.add_argument("--moves", nargs="+", default=list(NAMES), choices=list(NAMES))
-    ap.add_argument("--duration", type=float, default=4.0, help="seconds of dancing (default: 4)")
-    ap.add_argument("--preview", type=float, default=1.0, help="'Next: ...' time (default: 1)")
-    ap.add_argument("--rest", type=float, nargs=2, default=(2.0, 3.0), metavar=("MIN", "MAX"))
+    ap.add_argument("--preview", type=float, default=1.0,
+                    help="seconds the next move is shown before it starts (default: 1)")
+    # sequence protocol
+    ap.add_argument("--seq-len", type=int, default=8, help="moves per sequence (default: 8)")
+    ap.add_argument("--segment", type=float, nargs=2, default=(3.0, 6.0), metavar=("MIN", "MAX"),
+                    help="seconds per move in a sequence, drawn uniformly (default: 3 6)")
+    ap.add_argument("--break", dest="break_s", type=float, default=10.0,
+                    help="seconds of rest between sequences (default: 10)")
+    # discrete protocol
+    ap.add_argument("--duration", type=float, default=4.0,
+                    help="discrete: seconds of dancing per trial (default: 4)")
+    ap.add_argument("--rest", type=float, nargs=2, default=(2.0, 3.0), metavar=("MIN", "MAX"),
+                    help="discrete: seconds of rest between trials (default: 2 3)")
+
     ap.add_argument("--out-dir", default="data/dance")
     ap.add_argument("--overwrite", action="store_true")
     ap.add_argument("--port", type=int, default=cfg.MARKER_PORT)
@@ -53,13 +80,51 @@ def parse_args(argv=None):
     return ap.parse_args(argv)
 
 
-def make_schedule(codes, reps, rng):
-    """Balanced shuffled list, no move three times in a row."""
-    schedule = list(codes) * reps
+def no_repeat_order(codes, reps, rng, max_run):
+    """Every code reps times, shuffled, never more than max_run in a row."""
     while True:
-        rng.shuffle(schedule)
-        if all(not (a == b == c) for a, b, c in zip(schedule, schedule[1:], schedule[2:])):
-            return schedule
+        order = list(codes) * reps
+        rng.shuffle(order)
+        if all(len(set(order[i:i + max_run + 1])) > 1 for i in range(len(order) - max_run)):
+            return order
+
+
+def make_schedule(args, rng):
+    """List of runs; a run is [(code, seconds), ...] danced without a break."""
+    codes = [NAMES[m] for m in args.moves]
+    if args.protocol == "discrete":
+        return [[(c, args.duration)] for c in no_repeat_order(codes, args.reps, rng, 2)]
+    if len(codes) < 2:
+        sys.exit("A sequence needs at least 2 moves.")
+    order = greedy_no_adjacent(codes, args.reps, rng)
+    return [[(c, rng.uniform(*args.segment)) for c in order[i:i + args.seq_len]]
+            for i in range(0, len(order), args.seq_len)]
+
+
+def greedy_no_adjacent(codes, reps, rng):
+    """Every code reps times, no code twice in a row (a "switch" to itself is no switch)."""
+    while True:
+        left = {c: reps for c in codes}
+        order = []
+        while any(left.values()):
+            options = [c for c, n in left.items() if n and (not order or c != order[-1])]
+            if not options:
+                break  # only the previous move is left: start over
+            c = rng.choices(options, weights=[left[o] for o in options])[0]
+            order.append(c)
+            left[c] -= 1
+        else:
+            return order
+
+
+def cue_html(code, color, prefix="", then=None):
+    """Big move name, optionally with the next move in small grey text below."""
+    text = html.escape(cfg.MOVES[code][1]).replace("\n", "<br>")
+    out = f"<div style='color:{color}'>{prefix}{text}</div>"
+    if then is not None:
+        nxt = html.escape(cfg.MOVES[then][1].split("\n")[0])
+        out += f"<div style='color:#888; font-size:32pt'><br>then: {nxt}</div>"
+    return out
 
 
 class Recorder(threading.Thread):
@@ -93,18 +158,28 @@ class Cues(QtWidgets.QLabel):
         super().__init__()
         self.args = args
         self.rng = random.Random(args.seed)
-        self.schedule = make_schedule([NAMES[m] for m in args.moves], args.reps, self.rng)
-        self.i = 0
+        self.schedule = make_schedule(args, self.rng)
+        self.run_i = self.seg_i = 0
         self.started = self.done = False
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
         self.setAlignment(QtCore.Qt.AlignCenter)
         self.setWordWrap(True)
+        self.setTextFormat(QtCore.Qt.RichText)
         self.setFont(QtGui.QFont("Helvetica", 56, QtGui.QFont.Bold))
-        n = len(self.schedule)
-        mins = n * (args.preview + args.duration + sum(args.rest) / 2) / 60
-        self.show_text(f"Block {args.block}: {n} moves, about {mins:.0f} min.\n\n"
-                       "Press Space to start.", "white")
+        n = sum(len(run) for run in self.schedule)
+        mins = (sum(s for run in self.schedule for _, s in run)
+                + len(self.schedule) * (self.pause_mean() + args.preview + 0.5)) / 60
+        what = (f"{len(self.schedule)} sequences of up to {args.seq_len} moves"
+                if args.protocol == "sequence" else f"{n} moves")
+        self.show_text(f"Block {args.block}: {what}, about {mins:.0f} min.<br><br>"
+                       "<span style='font-size:32pt'>Keep repeating each move until the cue "
+                       "changes" + (", then go straight into the next one."
+                                    if args.protocol == "sequence" else ".")
+                       + "</span><br><br>Press Space to start.", "white")
+
+    def pause_mean(self):
+        return self.args.break_s if self.args.protocol == "sequence" else sum(self.args.rest) / 2
 
     def show_text(self, text, color):
         self.setStyleSheet(f"background: black; color: {color};")
@@ -125,37 +200,61 @@ class Cues(QtWidgets.QLabel):
             self.finish("Aborted.")
         elif e.key() == QtCore.Qt.Key_Space and not self.started:
             self.started = True
-            self.rest()
+            self.pause()
 
-    def rest(self):
-        if self.i >= len(self.schedule):
+    @property
+    def run(self):
+        return self.schedule[self.run_i]
+
+    def pause(self):
+        """Rest before the next run (a trial in discrete, a sequence in sequence)."""
+        if self.run_i >= len(self.schedule):
             return self.finish("Done, thank you!")
-        self.show_text("+", "#888")
-        self.after(self.rng.uniform(*self.args.rest), self.preview)
+        if self.args.protocol == "sequence":
+            self.show_text(f"Break<br><br><span style='font-size:32pt'>sequence "
+                           f"{self.run_i + 1}/{len(self.schedule)} next</span>", "#888")
+            self.after(self.args.break_s, self.preview)
+        else:
+            self.show_text("+", "#888")
+            self.after(self.rng.uniform(*self.args.rest), self.preview)
 
     def preview(self):
-        text = cfg.MOVES[self.schedule[self.i]][1]
-        self.show_text(f"Next ({self.i + 1}/{len(self.schedule)}):\n\n{text}", "#888")
+        if self.args.protocol == "sequence":
+            where = f"Sequence {self.run_i + 1}/{len(self.schedule)}, first:"
+        else:
+            where = f"Next ({self.run_i + 1}/{len(self.schedule)}):"
+        self.show_text(cue_html(self.run[0][0], "#888", f"{where}<br><br>"), "#888")
         self.after(self.args.preview, self.go)
 
     def go(self):
-        code = self.schedule[self.i]
-        self.show_text(f"GO!\n\n{cfg.MOVES[code][1]}", "#3f3")
+        code, seconds = self.run[self.seg_i]
+        self.show_text(cue_html(code, "#3f3", "GO!<br><br>" if self.seg_i == 0 else ""), "#3f3")
         self.send(code)
         QtWidgets.QApplication.beep()
-        self.after(self.args.duration, self.stop)
+        if self.seg_i + 1 < len(self.run):
+            nxt = self.run[self.seg_i + 1][0]
+            lead = min(self.args.preview, seconds / 2)
+            self.after(seconds - lead, lambda: self.show_text(cue_html(code, "#3f3", then=nxt),
+                                                              "#3f3"))
+            self.after(seconds, self.next_segment)
+        else:
+            self.after(seconds, self.stop)
+
+    def next_segment(self):
+        self.seg_i += 1
+        self.go()
 
     def stop(self):
         self.send(cfg.TRIAL_END)
         QtWidgets.QApplication.beep()
         self.show_text("STOP", "#f44")
-        self.i += 1
-        self.after(0.5, self.rest)
+        self.run_i, self.seg_i = self.run_i + 1, 0
+        self.after(0.5, self.pause)
 
     def finish(self, text):
         if self.done:
             return
-        self.done = True  # a trial cut short by Esc has no end marker, so it is dropped
+        self.done = True  # a run cut short by Esc has no end marker, so its last move is dropped
         self.show_text(text, "white")
         QtCore.QTimer.singleShot(1500, QtWidgets.QApplication.quit)
 
@@ -167,19 +266,27 @@ def signal_check(args):
     tasks.signal_check(check_args).close()
 
 
-def summary(path):
+def summary(path, expected=None):
     data, times = load_block(path)
     if len(times) < 2:
         return print(f"Only {len(times)} samples in {path}: nothing was recorded.")
     rate = (len(times) - 1) / (times[-1] - times[0])
-    codes, trials = sample_labels(data[:, cfg.MARKER_CH])
-    starts = [codes[trials == t][0] for t in range(1, trials.max() + 1)]
+    segs = segments(data[:, cfg.MARKER_CH])
+    starts = [code for _, _, code in segs]
     counts = {name: starts.count(code) for code, (name, _) in cfg.MOVES.items()}
+    # back-to-back segments are transitions; a gap means a break or a discrete trial
+    pairs = {(a[2], b[2]) for a, b in zip(segs, segs[1:]) if a[1] == b[0]}
     print(f"\n{path}: {len(times)} samples, {times[-1] - times[0]:.0f} s, {rate:.1f} samples/s "
           f"(expect ~{cfg.FS})")
-    print(f"{len(starts)} complete trials: " + ", ".join(f"{k} {v}" for k, v in counts.items() if v))
+    print(f"{len(starts)} complete segments" + (f" of {expected} cued" if expected else "") + ": "
+          + ", ".join(f"{k} {v}" for k, v in counts.items() if v))
+    if pairs:
+        n = len(cfg.MOVES)
+        print(f"{len(pairs)} of {n * (n - 1)} possible move-to-move transitions covered")
     if not starts:
-        print("No trials found: are markers reaching acquire.py (same --port)?")
+        print("No segments found: are markers reaching acquire.py (same --port)?")
+    elif expected and len(starts) < expected:
+        print("Fewer segments than cued: some markers were lost, or the block was aborted.")
 
 
 def main(argv=None):
@@ -206,7 +313,7 @@ def main(argv=None):
 
     time.sleep(1.0)  # catch the last samples and marker
     recorder.stop()
-    summary(path)
+    summary(path, expected=sum(len(run) for run in cues.schedule))
 
 
 if __name__ == "__main__":

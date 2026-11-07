@@ -112,7 +112,7 @@ repo tries to do. It uses the unfiltered `core8_raw` stream, because the 1–40 
 |---|---|
 | `dance/config.py` | moves, window sizes and online settings. **Add or remove a move here.** |
 | `dance/stream.py` | sources: live LSL or replay of a recorded CSV (same interface), and labels from markers |
-| `dance/record.py` | full-screen cues for one block; writes `data/dance/<subject>_b<block>.csv` |
+| `dance/record.py` | full-screen cues for one block (chained sequences, or single trials); writes `data/dance/<subject>_b<block>.csv` |
 | `dance/features.py` | per-window features, shared by training and live |
 | `dance/train.py` | leave-one-block-out evaluation against a majority baseline, then saves the model |
 | `dance/live.py` | decoding (Space start/stop by default, or continuous) with the dashboard |
@@ -120,7 +120,7 @@ repo tries to do. It uses the unfiltered `core8_raw` stream, because the 1–40 
 ```bash
 # Terminal 1, whole session (the HDF5 is a backup; dance/ records its own CSVs)
 .venv/bin/python acquire.py --record data/dance/p01.h5
-# Terminal 2: contact check while sitting still, then one block (~4.5 min); repeat for blocks 2..5
+# Terminal 2: contact check while sitting still, then one block (~4 min); repeat for more blocks
 .venv/bin/python calibrate.py --no-alpha
 .venv/bin/python -m dance.record --subject p01 --block 1
 # Train (after 2 blocks already, to check the moves are separable at all)
@@ -133,12 +133,27 @@ repo tries to do. It uses the unfiltered `core8_raw` stream, because the 1–40 
 .venv/bin/python -m dance.live --model models/p01_no5.joblib --mode continuous --replay data/dance/p01_b5.csv
 ```
 
-**Recording.** A trial is rest (2–3 s), then "Next: MOVE" (1 s), then GO (beep, 4 s of
-dancing), then STOP (beep). Each block has 5 reps of every move in shuffled order. Five blocks
-give 25 reps per move. The marker codes (11–19, end = 99) travel over UDP into
-`acquire.py`, so they sit in channel 9 of the same stream as the EEG. The CSV is
-`time, Fz..PO8, marker`, with the time on gpype's clock. At the end, the recorder prints the
-sample rate and the number of trials it found per move.
+**Recording, `--protocol sequence` (the default).** Moves are chained the way they are danced
+live: a sequence is 8 moves back to back (`--seq-len`), each lasting a random 3–6 s
+(`--segment`), with a beep and a new marker at every switch and no rest in between. During the
+last second of each move the screen shows "then: NEXT MOVE" so the dancer flows straight into
+it. Sequences are separated by a 10 s break (`--break`). Each block has every move 5 times
+(`--reps`), never twice in a row, so about 4 min and 35 transitions per block. Stand still is
+one of the moves, so the data also has move → still → move. The dancer keeps repeating each
+move until the cue changes, never just once. Compared with the discrete protocol, this gives
+the classifier real move-to-move transitions, variable durations (so it can't learn trial
+timing), and a replay that looks like live use.
+
+**Recording, `--protocol discrete`.** The original trials: rest (2–3 s), "Next: MOVE" (1 s),
+GO (beep, 4 s of dancing, `--duration`), STOP (beep). Blocks of both kinds can be trained on
+together.
+
+In both protocols the marker codes (11–19, end of a run = 99) travel over UDP into
+`acquire.py`, so they sit in channel 9 of the same stream as the EEG. A move code ends the
+current segment and starts the next one. The CSV is `time, Fz..PO8, marker`, with the time on
+gpype's clock. At the end, the recorder prints the sample rate, the segments it found per move
+(against the number cued, so lost markers show up) and how many move-to-move transitions it
+covered.
 
 **Changing moves.** Codes are fixed once recorded. Rock step (12) was retired: blocks recorded
 with it still load, and its trials are skipped. Never reuse a retired code.
@@ -173,7 +188,7 @@ at least 1.5 s. This mode needs the dashboard, so `--no-gui` works only with
   checks that a second gpype `LSLSender` on the unfiltered Router output works.
 - Shake your head and check the raw units, DC offset and saturation in the mean/std output.
 - Record a short block (`--reps 1`). The summary should show about 250 samples/s, which
-  rules out Bluetooth dropouts while dancing, and one trial per move, which shows that
+  rules out Bluetooth dropouts while dancing, and one segment per move, which shows that
   codes above 9 pass through `UDPReceiver`.
 - The LSL timestamps are gpype's `time.monotonic()`. Don't mix them with
   `pylsl.local_clock()`.
