@@ -77,7 +77,7 @@ def main(argv=None):
         amplitude_limit=50, time_window=10, hidden_channels=[EEG_CHANNELS],
         markers=[gp.TimeSeriesScope.Markers(color=c, label=str(v),
                                             channel=EEG_CHANNELS, value=v)
-                 for v, c in zip([*range(1, 10), *range(11, 18), 99], "rgbcmyrgbrgbcmygw")])
+                 for v, c in zip([*range(1, 10), *range(11, 20), 99], "rgbcmyrgbrgbcmyrgbw")])
     lsl = gp.LSLSender(stream_name=args.stream_name)
     raw_lsl = gp.LSLSender(stream_name=args.raw_stream)  # dance/ needs motion + EMG unfiltered
 

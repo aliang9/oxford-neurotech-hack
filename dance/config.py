@@ -1,18 +1,22 @@
 """Everything about the dance experiment you might want to change.
 
 To add or remove a move, edit MOVES. Codes must be unique, not 99, and
-should stay fixed once you have recorded data with them.
+should stay fixed once you have recorded data with them. Never reuse a
+retired code: old recordings still contain it.
 """
 
 # marker code: (name, cue text shown on screen)
 MOVES = {
     11: ("step_touch", "STEP-TOUCH\nside to side"),
-    12: ("rock_step", "ROCK STEP\nforward and back"),
+    # 12 was rock_step, retired (confused with spin and step_touch). Blocks
+    # recorded before still contain it; those trials are skipped.
     13: ("spin", "SPIN\npivot turn"),
     14: ("shimmy", "SHOULDER SHIMMY"),
     15: ("arm_pumps", "ARM PUMPS"),
     16: ("bounce", "BOUNCE\nsmall hops"),
     17: ("rest", "STAND STILL"),
+    18: ("robot", "THE ROBOT\nstiff, jerky arms"),
+    19: ("floss", "THE FLOSS\nswing arms hip to hip"),
 }
 TRIAL_END = 99  # marker sent when a move stops
 

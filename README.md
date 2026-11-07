@@ -103,7 +103,8 @@ Switch on the headset. g.Pype finds it by BLE scan, so you do not pair it in Sys
 
 ## Dance-move classifier (`dance/`)
 
-This classifies 7 moves from movement artifacts and EMG, the opposite of what the rest of the
+This classifies 8 moves (step-touch, spin, shoulder shimmy, arm pumps, bounce, stand still,
+the robot, the floss) from movement artifacts and EMG, the opposite of what the rest of the
 repo tries to do. It uses the unfiltered `core8_raw` stream, because the 1–40 Hz filter on
 `core8_eeg` removes both slow head motion and EMG. The motion stream is not used.
 
@@ -134,10 +135,13 @@ repo tries to do. It uses the unfiltered `core8_raw` stream, because the 1–40 
 
 **Recording.** A trial is rest (2–3 s), then "Next: MOVE" (1 s), then GO (beep, 4 s of
 dancing), then STOP (beep). Each block has 5 reps of every move in shuffled order. Five blocks
-give 25 reps per move. The marker codes (11–17, end = 99) travel over UDP into
+give 25 reps per move. The marker codes (11–19, end = 99) travel over UDP into
 `acquire.py`, so they sit in channel 9 of the same stream as the EEG. The CSV is
 `time, Fz..PO8, marker`, with the time on gpype's clock. At the end, the recorder prints the
 sample rate and the number of trials it found per move.
+
+**Changing moves.** Codes are fixed once recorded. Rock step (12) was retired: blocks recorded
+with it still load, and its trials are skipped. Never reuse a retired code.
 
 **Features** (per 1.5 s window, every 0.25 s): only each channel's mean is removed, nothing
 else is filtered. Per channel: log RMS, log RMS of the first difference, and log band power at
