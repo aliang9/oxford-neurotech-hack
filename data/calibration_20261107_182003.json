@@ -1,0 +1,73 @@
+{
+  "time": "2026-11-07 18:20:03",
+  "stream": "core8_eeg",
+  "ignored": [],
+  "contact_passed": false,
+  "channels": [
+    {
+      "label": "Fz",
+      "amplitude": 92.66260349998964,
+      "drift": 127.02859114690564,
+      "muscle": 5.341496480347205,
+      "status": "bad",
+      "hint": "slow drift: poor contact. Part the hair, re-wet, press the electrode on"
+    },
+    {
+      "label": "C3",
+      "amplitude": 23.388532868240507,
+      "drift": 82.20996077855413,
+      "muscle": 4.626195998589226,
+      "status": "good",
+      "hint": ""
+    },
+    {
+      "label": "Cz",
+      "amplitude": 48.07968973249742,
+      "drift": 96.58105620571791,
+      "muscle": 4.718393775232195,
+      "status": "bad",
+      "hint": "slow drift: poor contact. Part the hair, re-wet, press the electrode on"
+    },
+    {
+      "label": "C4",
+      "amplitude": 103.09492840026235,
+      "drift": 226.82958138058245,
+      "muscle": 9.31760815955196,
+      "status": "bad",
+      "hint": "muscle: relax jaw, forehead and neck"
+    },
+    {
+      "label": "Pz",
+      "amplitude": 130.20281800771681,
+      "drift": 260.408515816264,
+      "muscle": 9.27965728885083,
+      "status": "bad",
+      "hint": "muscle: relax jaw, forehead and neck"
+    },
+    {
+      "label": "PO7",
+      "amplitude": 159.4332662304388,
+      "drift": 257.90094521567005,
+      "muscle": 5.633502571860245,
+      "status": "bad",
+      "hint": "slow drift: poor contact. Part the hair, re-wet, press the electrode on"
+    },
+    {
+      "label": "POz",
+      "amplitude": 71.0589206806635,
+      "drift": 138.31649358079795,
+      "muscle": 4.360768366610501,
+      "status": "bad",
+      "hint": "slow drift: poor contact. Part the hair, re-wet, press the electrode on"
+    },
+    {
+      "label": "PO8",
+      "amplitude": 110.29847747359885,
+      "drift": 194.41939747135677,
+      "muscle": 3.837339094655362,
+      "status": "bad",
+      "hint": "slow drift: poor contact. Part the hair, re-wet, press the electrode on"
+    }
+  ],
+  "passed": false
+}

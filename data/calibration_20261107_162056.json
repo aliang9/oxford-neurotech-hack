@@ -1,0 +1,73 @@
+{
+  "time": "2026-11-07 16:20:56",
+  "stream": "core8_eeg",
+  "ignored": [],
+  "contact_passed": false,
+  "channels": [
+    {
+      "label": "Fz",
+      "amplitude": 11.133833908843462,
+      "drift": 942.7733925527892,
+      "muscle": 13.906829156668811,
+      "status": "bad",
+      "hint": "muscle: relax jaw, forehead and neck"
+    },
+    {
+      "label": "C3",
+      "amplitude": 40.62672654142303,
+      "drift": 920.9760059126002,
+      "muscle": 12.472194271855628,
+      "status": "bad",
+      "hint": "muscle: relax jaw, forehead and neck"
+    },
+    {
+      "label": "Cz",
+      "amplitude": 13.653535252954713,
+      "drift": 436.6465113006183,
+      "muscle": 7.658868291525007,
+      "status": "warn",
+      "hint": "muscle: relax jaw, forehead and neck"
+    },
+    {
+      "label": "C4",
+      "amplitude": 19.039664653959996,
+      "drift": 409.6399742307355,
+      "muscle": 3.822703106322994,
+      "status": "good",
+      "hint": ""
+    },
+    {
+      "label": "Pz",
+      "amplitude": 6.636534237327384,
+      "drift": 188.6535622566133,
+      "muscle": 2.5144744051011276,
+      "status": "good",
+      "hint": ""
+    },
+    {
+      "label": "PO7",
+      "amplitude": 10.030287035276919,
+      "drift": 417.7008365313566,
+      "muscle": 5.360287498137939,
+      "status": "good",
+      "hint": ""
+    },
+    {
+      "label": "POz",
+      "amplitude": 3.5404040093877573,
+      "drift": 61.083222743454385,
+      "muscle": 1.437548768297959,
+      "status": "good",
+      "hint": ""
+    },
+    {
+      "label": "PO8",
+      "amplitude": 6.851001264771302,
+      "drift": 90.87424756857517,
+      "muscle": 0.9953964145317682,
+      "status": "good",
+      "hint": ""
+    }
+  ],
+  "passed": false
+}
