@@ -11,7 +11,9 @@ filtered stream:
 
 The thresholds come from session p01_s1. There the five good channels had
 amplitude 9-12 uV (90th percentile 15-17); Fz, Cz and C4 had poor contact
-at 28-57 uV, almost all of it in 1-4 Hz.
+at 28-57 uV, almost all of it in 1-4 Hz. They are set loosely: replaying
+that session, the good channels are green in 91-100% of 5 s windows, while
+Fz and C4 are still red most of the time.
 """
 
 import threading
@@ -22,8 +24,8 @@ import numpy as np
 from pylsl import StreamInlet, resolve_byprop
 from scipy.signal import welch
 
-GOOD_UV, BAD_UV, FLAT_UV = 20.0, 30.0, 0.5      # amplitude
-MUSCLE_WARN_UV, MUSCLE_BAD_UV = 5.0, 8.0        # 20-40 Hz rms
+GOOD_UV, BAD_UV, FLAT_UV = 25.0, 40.0, 0.5      # amplitude
+MUSCLE_WARN_UV, MUSCLE_BAD_UV = 6.0, 10.0       # 20-40 Hz rms
 POSTERIOR = ("Pz", "PO7", "POz", "PO8")         # where eyes-closed alpha shows
 COLORS = {"good": "\033[32m", "warn": "\033[33m", "bad": "\033[31m", "ignored": "\033[90m"}
 

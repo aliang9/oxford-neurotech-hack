@@ -188,9 +188,9 @@ Run it while `acquire.py` is streaming.
 
 | metric | meaning | good | bad |
 |---|---|---|---|
-| ampl | median over 1 s chunks of the 1–40 Hz std (robust to the odd blink) | ≤ 20 µV | > 30 µV, or < 0.5 µV (flat) |
+| ampl | median over 1 s chunks of the 1–40 Hz std (robust to the odd blink) | ≤ 25 µV | > 40 µV, or < 0.5 µV (flat) |
 | 1-4Hz | slow drift: poor contact | | |
-| 20-40 | muscle | ≤ 5 µV | > 8 µV |
+| 20-40 | muscle | ≤ 6 µV | > 10 µV |
 
 - Every failing channel gets a hint: *flat* (no contact), *slow drift* (part the hair, re-wet,
   press the electrode on) or *muscle* (relax jaw, forehead and neck).
@@ -201,7 +201,7 @@ Run it while `acquire.py` is streaming.
   would have flagged all three before the experiment started.
 
 **Stage 2: alpha check.** 15 s eyes open, then 15 s eyes closed, cued by beeps.
-- Closing the eyes must at least multiply 8–13 Hz power at Pz/PO7/POz/PO8 by 1.5. Session
+- Closing the eyes must at least multiply 8–13 Hz power at Pz/PO7/POz/PO8 by 1.3. Session
   p01_s1 gave 3–5×, and every trial was above 2×.
 - This shows the electrodes pick up brain signal, not just low noise.
 - Skip it with `--no-alpha`.

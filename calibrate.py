@@ -7,7 +7,7 @@ Run it while acquire.py is streaming. Two stages:
      green for --hold seconds in a row. The participant sits still, eyes
      open, jaw relaxed.
   2. Alpha check: 15 s eyes open, then 15 s eyes closed. Closing the eyes
-     should at least multiply 8-13 Hz power at Pz/PO7/POz/PO8 by 1.5
+     should at least multiply 8-13 Hz power at Pz/PO7/POz/PO8 by 1.3
      (session p01_s1 gave 3-5x). This shows the posterior electrodes pick
      up brain signal, not just low noise.
 
@@ -24,7 +24,7 @@ import numpy as np
 
 import quality as q
 
-ALPHA_PASS = 1.5
+ALPHA_PASS = 1.3
 
 
 def parse_args(argv=None):
