@@ -11,6 +11,7 @@ BCICore ────────────────┴─> Router ─┬─
    │                                                                     └─> LSL "core8_eeg"
    └─ accelerometer / gyroscope ─────────────────────────────────────────────> LSL "core8_motion"
 
+calibrate.py / tasks.py check:  LSL "core8_eeg" ─> per-channel amplitude, drift, muscle ─> pass/fail
 decode.py:  HDF5 ─> zero-phase filters ─> epochs per task ─> band power ─> LDA + cross-validation
 receive.py: any LSL stream ─> per-channel mean/std every second (+ optional CSV)
 ```
@@ -19,7 +20,9 @@ receive.py: any LSL stream ─> per-channel mean/std every second (+ optional CS
 |---|---|
 | `acquire.py` | headset → filters → scope + LSL; records raw EEG + task markers with `--record` |
 | `motion.py` | `BCICore` subclass that also publishes the accelerometer and gyroscope over LSL |
-| `tasks.py` | full-screen task cues, randomised trials, sends markers to `acquire.py` |
+| `calibrate.py` | live per-channel contact check plus an eyes-closed alpha test; writes a pass/fail report |
+| `quality.py` | the signal-quality metrics and thresholds used by `calibrate.py` and `tasks.py` |
+| `tasks.py` | full-screen task cues, randomised trials, sends markers to `acquire.py`; refuses to start on bad channels |
 | `decode.py` | offline decoding of the recorded tasks, with chance level and a permutation test |
 | `receive.py` | standalone pylsl reader, e.g. for checking streams or saving them to CSV |
 
@@ -52,7 +55,10 @@ Switch on the headset. g.Pype finds it by BLE scan, so you do not pair it in Sys
 # Terminal 1: acquire + record. Leave it running for the whole session.
 .venv/bin/python acquire.py --record data/p01_s1.h5          # add --oscar for artifact removal
 
-# Check signal quality in the scope first (see Troubleshooting). Then, in terminal 2:
+# Terminal 2: fix the electrodes until every channel is green, then do the alpha check
+.venv/bin/python calibrate.py
+
+# Then run the session. It re-checks the signal for 5 s and won't start on a red channel.
 .venv/bin/python tasks.py --tasks rest_open rest_closed math --trials 15 --log data/p01_s1_tasks.csv
 
 # When tasks.py says "Done", close the scope window to finish the file. Then:
@@ -92,6 +98,45 @@ Switch on the headset. g.Pype finds it by BLE scan, so you do not pair it in Sys
   tasks, suspect artifacts. Keep cues short and have the participant fixate and stay still.
 - **Aim for ≥ 30 clean trials per class.** With 15 per class, accuracies swing a lot, so
   rely on the permutation p-value.
+
+## Calibration: getting every electrode recording properly
+
+The Core-8 can't measure impedance (neither the driver nor gpype exposes it), so
+`calibrate.py` judges each channel from its live signal on the `core8_eeg` stream.
+Run it while `acquire.py` is streaming.
+
+**Stage 1: contact.** A table refreshed every second shows, per channel:
+
+| metric | meaning | good | bad |
+|---|---|---|---|
+| ampl | median over 1 s chunks of the 1–40 Hz std (robust to the odd blink) | ≤ 20 µV | > 30 µV, or < 0.5 µV (flat) |
+| 1-4Hz | slow drift: poor contact | | |
+| 20-40 | muscle | ≤ 5 µV | > 8 µV |
+
+- Every failing channel gets a hint: *flat* (no contact), *slow drift* (part the hair, re-wet,
+  press the electrode on) or *muscle* (relax jaw, forehead and neck).
+- The stage passes once every channel is green for 10 s in a row (`--hold`).
+- The participant sits still, eyes open.
+- The thresholds come from session p01_s1. The good channels sat at 9–12 µV; Fz, Cz and C4
+  had poor contact at 28–57 µV, almost all of it in 1–4 Hz. Run on that session, this check
+  would have flagged all three before the experiment started.
+
+**Stage 2: alpha check.** 15 s eyes open, then 15 s eyes closed, cued by beeps.
+- Closing the eyes must at least multiply 8–13 Hz power at Pz/PO7/POz/PO8 by 1.5. Session
+  p01_s1 gave 3–5×, and every trial was above 2×.
+- This shows the electrodes pick up brain signal, not just low noise.
+- Skip it with `--no-alpha`.
+
+The result goes to `data/calibration_<time>.json`, and the exit code is 0 on a pass.
+Use `--ignore CH` to leave out an electrode you can't fix (the decoder then needs
+`--exclude CH` too).
+
+**The gate in `tasks.py`.**
+- Before the first trial, it checks 5 s of signal with the same metrics. It refuses to start
+  if any channel is red (yellow is allowed, with a warning).
+- At every break, it re-checks and lists channels that have degraded, so you can re-wet
+  them before continuing.
+- `--ignore CH` and `--skip-check` override it.
 
 ## Artifacts: what's built in
 
