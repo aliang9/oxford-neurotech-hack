@@ -183,7 +183,8 @@ def run_dashboard(source, decoder, scale, discrete):
     eeg = pg.PlotWidget(title="Raw EEG, last 5 s (mean removed)")
     eeg.getAxis("left").setTicks([[(-i * scale, ch) for i, ch in enumerate(cfg.CHANNELS)]])
     eeg.setYRange(-(cfg.N_EEG - 0.5) * scale, 0.5 * scale)
-    curves = [eeg.plot(pen=pg.intColor(i, hues=cfg.N_EEG)) for i in range(cfg.N_EEG)]
+    # one neutral colour: hues here would look like the move colours used below
+    curves = [eeg.plot(pen=pg.mkPen("#ddd", width=1)) for _ in range(cfg.N_EEG)]
     grid.addWidget(eeg, 0, 0, 3, 1)
 
     # Signal quality per channel (only meaningful while standing still)

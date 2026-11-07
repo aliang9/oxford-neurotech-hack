@@ -144,6 +144,11 @@ move. The dancer keeps repeating each move until the cue changes, never just onc
 with the discrete protocol, this gives the classifier real move-to-move transitions, variable
 durations (so it can't learn trial timing), and a replay that looks like live use.
 
+The recording window shows the cues on the right and the electrodes on the left, like
+`acquire.py`'s scope: the last 10 s of the 1–40 Hz `core8_eeg` stream, ±50 µV per channel
+(`--scale`), with a dashed line labelled with the move at every marker. A flat line there is a
+dead electrode. `--no-scope` hides it.
+
 **Recording, `--protocol discrete`.** The original trials: rest (2–3 s), "Next: MOVE" (1 s),
 GO (beep, 4 s of dancing, `--duration`), STOP (beep). Blocks of both kinds can be trained on
 together.

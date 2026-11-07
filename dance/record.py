@@ -21,6 +21,11 @@ rest (+) -> "Next: MOVE" -> GO (beep, code) -> --duration s -> STOP (beep, 99).
 
 In both, the dancer keeps repeating the move until the cue changes.
 
+The window shows the cues on the right and, on the left, the electrodes as
+acquire.py's scope does: the last 10 s of the 1-40 Hz filtered core8_eeg
+stream, +-50 uV per channel (--scale), with a line at every marker sent.
+--no-scope shows the cues only.
+
 The markers go to acquire.py over UDP, which puts them in the marker channel
 of the same LSL stream as the EEG, so labels and samples are aligned without
 any clock bookkeeping. A background thread writes that stream to
@@ -40,6 +45,8 @@ import threading
 import time
 import types
 
+import numpy as np
+import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import config as cfg
@@ -75,6 +82,9 @@ def parse_args(argv=None):
     ap.add_argument("--port", type=int, default=cfg.MARKER_PORT)
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--windowed", action="store_true")
+    ap.add_argument("--no-scope", action="store_true", help="hide the electrode signals")
+    ap.add_argument("--scale", type=float, default=50.0,
+                    help="scope: uV each channel may swing before it is clipped (default: 50)")
     ap.add_argument("--skip-check", action="store_true", help="skip the signal-quality check")
     ap.add_argument("--ignore", nargs="+", default=[], metavar="CH",
                     help="channels the signal check should ignore")
@@ -168,7 +178,7 @@ class Cues(QtWidgets.QLabel):
         self.setAlignment(QtCore.Qt.AlignCenter)
         self.setWordWrap(True)
         self.setTextFormat(QtCore.Qt.RichText)
-        self.setFont(QtGui.QFont("Helvetica", 56, QtGui.QFont.Bold))
+        self.setFont(QtGui.QFont("Helvetica", 48, QtGui.QFont.Bold))
         n = sum(len(run) for run in self.schedule)
         mins = (sum(s for run in self.schedule for _, s in run)
                 + len(self.schedule) * (self.pause_mean() + args.preview + 0.5)) / 60
@@ -198,12 +208,13 @@ class Cues(QtWidgets.QLabel):
         t.timeout.connect(t.deleteLater)
         t.start(int(1000 * seconds))
 
-    def keyPressEvent(self, e):
-        if e.key() == QtCore.Qt.Key_Escape:
-            self.finish("Aborted.")
-        elif e.key() == QtCore.Qt.Key_Space and not self.started:
+    def start(self):
+        if not self.started:
             self.started = True
             self.pause()
+
+    def abort(self):
+        self.finish("Aborted.")
 
     @property
     def run(self):
@@ -262,6 +273,85 @@ class Cues(QtWidgets.QLabel):
         QtCore.QTimer.singleShot(1500, QtWidgets.QApplication.quit)
 
 
+class Scope(pg.PlotWidget):
+    """The last few seconds of every electrode, one lane each, like acquire.py's scope."""
+
+    def __init__(self, source, scale, seconds=10.0):
+        super().__init__()
+        self.source, self.scale, self.seconds = source, scale, seconds
+        self.buf = np.zeros((0, cfg.N_EEG))
+        self.total = 0          # samples received so far
+        self.last_marker = 0
+        self.lines = []         # (sample index, InfiniteLine) per marker on screen
+
+        self.setBackground("k")
+        self.setFocusPolicy(QtCore.Qt.NoFocus)  # Space and Esc belong to the cues
+        self.setMenuEnabled(False)
+        self.setMouseEnabled(False, False)
+        self.hideButtons()
+        self.setTitle(f"Electrodes, 1-40 Hz, \u00b1{scale:g} \u00b5V", color="#aaa")
+        self.getAxis("left").setTicks([[(-2 * i * scale, ch) for i, ch in enumerate(cfg.CHANNELS)]])
+        self.setYRange(-(2 * cfg.N_EEG - 1) * scale, scale, padding=0.02)
+        self.setXRange(-seconds, 0, padding=0)
+        self.setLabel("bottom", "seconds")
+        self.curves = [self.plot(pen=pg.mkPen("#ddd", width=1)) for _ in cfg.CHANNELS]
+
+        self.timer = QtCore.QTimer(self)
+        self.timer.timeout.connect(self.refresh)
+        self.timer.start(40)
+
+    def refresh(self):
+        samples, _ = self.source.pull()
+        if len(samples):
+            self.add_markers(np.rint(samples[:, cfg.MARKER_CH]).astype(int))
+            self.buf = np.vstack([self.buf, samples[:, :cfg.N_EEG]])[-int(self.seconds * cfg.FS):]
+            self.total += len(samples)
+        if len(self.buf) < 2:
+            return
+        x = self.buf - self.buf.mean(axis=0)
+        t = (np.arange(len(x)) - len(x)) / cfg.FS
+        for i, curve in enumerate(self.curves):
+            curve.setData(t, np.clip(x[:, i], -self.scale, self.scale) - 2 * i * self.scale)
+        for line in [ln for k, ln in self.lines if (k - self.total) / cfg.FS < -self.seconds]:
+            self.removeItem(line)
+        self.lines = [(k, ln) for k, ln in self.lines if ln.scene() is not None]
+        for k, line in self.lines:
+            line.setValue((k - self.total) / cfg.FS)
+
+    def add_markers(self, m):
+        """A vertical line at the onset of each marker pulse, labelled with the move."""
+        previous = np.r_[self.last_marker, m[:-1]]
+        self.last_marker = m[-1]
+        for i in np.flatnonzero((m != 0) & (m != previous)):
+            move = m[i] in cfg.MOVES
+            label = cfg.MOVES[m[i]][0] if move else "stop" if m[i] == cfg.TRIAL_END else str(m[i])
+            line = pg.InfiniteLine(angle=90, label=label,
+                                   pen=pg.mkPen("#3f3" if move else "#f44", style=QtCore.Qt.DashLine),
+                                   labelOpts={"position": 0.98, "color": "#ccc"})
+            self.addItem(line)
+            self.lines.append((self.total + i, line))
+
+
+class Window(QtWidgets.QWidget):
+    """Electrodes on the left, cues on the right."""
+
+    def __init__(self, cues, scope=None):
+        super().__init__()
+        self.setWindowTitle("Dance recording")
+        palette = self.palette()
+        palette.setColor(QtGui.QPalette.Window, QtGui.QColor("black"))
+        self.setPalette(palette)
+        self.setAutoFillBackground(True)
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        if scope is not None:
+            layout.addWidget(scope, 1)
+        layout.addWidget(cues, 1)
+        QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Space), self, activated=cues.start)
+        QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Escape), self, activated=cues.abort)
+
+
 def signal_check(args):
     """The same pre-start check as tasks.py, on the filtered stream, sitting still."""
     import tasks
@@ -310,8 +400,15 @@ def main(argv=None):
 
     app = QtWidgets.QApplication(sys.argv[:1])
     cues = Cues(args)
-    cues.resize(1000, 700)
-    cues.show() if args.windowed else cues.showFullScreen()
+    scope = None
+    if not args.no_scope:
+        try:
+            scope = Scope(LSLSource(cfg.QUALITY_STREAM, timeout=3.0), args.scale)
+        except RuntimeError as e:
+            print(f"{e} Showing the cues without the electrode scope.")
+    window = Window(cues, scope)
+    window.resize(1400, 800)
+    window.show() if args.windowed else window.showFullScreen()
     app.exec()
 
     time.sleep(1.0)  # catch the last samples and marker
