@@ -1,0 +1,6 @@
+# motion.py hooks private BCICore methods: keep gpype on 4.1.x
+gpype[all]==4.1.*
+pylsl
+numpy
+scipy
+scikit-learn
