@@ -103,10 +103,10 @@ Switch on the headset. g.Pype finds it by BLE scan, so you do not pair it in Sys
 
 ## Dance-move classifier (`dance/`)
 
-This classifies 8 moves (step-touch, spin, shoulder shimmy, arm pumps, bounce, stand still,
-the robot, the floss) from movement artifacts and EMG, the opposite of what the rest of the
-repo tries to do. It uses the unfiltered `core8_raw` stream, because the 1–40 Hz filter on
-`core8_eeg` removes both slow head motion and EMG. The motion stream is not used.
+This classifies 7 moves (spin, arm pumps, bounce, stand still, the robot, the floss, head bob)
+from movement artifacts and EMG, the opposite of what the rest of the repo tries to do. It uses
+the unfiltered `core8_raw` stream, because the 1–40 Hz filter on `core8_eeg` removes both slow
+head motion and EMG. The motion stream is not used.
 
 | file | what it does |
 |---|---|
@@ -134,29 +134,31 @@ repo tries to do. It uses the unfiltered `core8_raw` stream, because the 1–40 
 ```
 
 **Recording, `--protocol sequence` (the default).** Moves are chained the way they are danced
-live: a sequence is 8 moves back to back (`--seq-len`), each lasting a random 3–6 s
-(`--segment`), with a beep and a new marker at every switch and no rest in between. During the
-last second of each move the screen shows "then: NEXT MOVE" so the dancer flows straight into
-it. Sequences are separated by a 10 s break (`--break`). Each block has every move 5 times
-(`--reps`), never twice in a row, so about 4 min and 35 transitions per block. Stand still is
-one of the moves, so the data also has move → still → move. The dancer keeps repeating each
-move until the cue changes, never just once. Compared with the discrete protocol, this gives
-the classifier real move-to-move transitions, variable durations (so it can't learn trial
-timing), and a replay that looks like live use.
+live: a sequence is 7 moves back to back (`--seq-len`, default: one per move), each lasting a
+random 3–6 s (`--segment`), with a beep and a new marker at every switch and no rest in
+between. During the last second of each move the screen shows "then: NEXT MOVE" so the dancer
+flows straight into it. Sequences are separated by a 10 s break (`--break`). Each block has
+every move 5 times (`--reps`), never twice in a row, so 5 sequences, about 3.5 min and 30
+transitions per block. Stand still is one of the moves, so the data also has move → still →
+move. The dancer keeps repeating each move until the cue changes, never just once. Compared
+with the discrete protocol, this gives the classifier real move-to-move transitions, variable
+durations (so it can't learn trial timing), and a replay that looks like live use.
 
 **Recording, `--protocol discrete`.** The original trials: rest (2–3 s), "Next: MOVE" (1 s),
 GO (beep, 4 s of dancing, `--duration`), STOP (beep). Blocks of both kinds can be trained on
 together.
 
-In both protocols the marker codes (11–19, end of a run = 99) travel over UDP into
+In both protocols the marker codes (13–20, end of a run = 99) travel over UDP into
 `acquire.py`, so they sit in channel 9 of the same stream as the EEG. A move code ends the
 current segment and starts the next one. The CSV is `time, Fz..PO8, marker`, with the time on
 gpype's clock. At the end, the recorder prints the sample rate, the segments it found per move
 (against the number cued, so lost markers show up) and how many move-to-move transitions it
 covered.
 
-**Changing moves.** Codes are fixed once recorded. Rock step (12) was retired: blocks recorded
-with it still load, and its trials are skipped. Never reuse a retired code.
+**Changing moves.** Codes are fixed once recorded. Step-touch (11), rock step (12) and
+shoulder shimmy (14) were retired, as they were confused with spin and with the arm moves:
+blocks recorded with them still load, and their trials are skipped. Never reuse a retired
+code.
 
 **Features** (per 1.5 s window, every 0.25 s): only each channel's mean is removed, nothing
 else is filtered. Per channel: log RMS, log RMS of the first difference, and log band power at

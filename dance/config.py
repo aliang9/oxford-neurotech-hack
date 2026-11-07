@@ -6,17 +6,17 @@ retired code: old recordings still contain it.
 """
 
 # marker code: (name, cue text shown on screen)
+# Retired codes: blocks recorded before still contain them, and those
+# trials are skipped. 11 step_touch (confused with spin), 12 rock_step
+# (confused with spin and step_touch), 14 shimmy (confused with the arm moves).
 MOVES = {
-    11: ("step_touch", "STEP-TOUCH\nside to side"),
-    # 12 was rock_step, retired (confused with spin and step_touch). Blocks
-    # recorded before still contain it; those trials are skipped.
     13: ("spin", "SPIN\npivot turn"),
-    14: ("shimmy", "SHOULDER SHIMMY"),
     15: ("arm_pumps", "ARM PUMPS"),
     16: ("bounce", "BOUNCE\nsmall hops"),
     17: ("rest", "STAND STILL"),
     18: ("robot", "THE ROBOT\nstiff, jerky arms"),
     19: ("floss", "THE FLOSS\nswing arms hip to hip"),
+    20: ("head_bob", "HEAD BOB\nnod to the beat"),
 }
 TRIAL_END = 99  # marker sent when a move stops
 

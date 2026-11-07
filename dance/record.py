@@ -58,7 +58,8 @@ def parse_args(argv=None):
     ap.add_argument("--preview", type=float, default=1.0,
                     help="seconds the next move is shown before it starts (default: 1)")
     # sequence protocol
-    ap.add_argument("--seq-len", type=int, default=8, help="moves per sequence (default: 8)")
+    ap.add_argument("--seq-len", type=int, default=None,
+                    help="moves per sequence (default: the number of moves)")
     ap.add_argument("--segment", type=float, nargs=2, default=(3.0, 6.0), metavar=("MIN", "MAX"),
                     help="seconds per move in a sequence, drawn uniformly (default: 3 6)")
     ap.add_argument("--break", dest="break_s", type=float, default=10.0,
@@ -97,8 +98,9 @@ def make_schedule(args, rng):
     if len(codes) < 2:
         sys.exit("A sequence needs at least 2 moves.")
     order = greedy_no_adjacent(codes, args.reps, rng)
-    return [[(c, rng.uniform(*args.segment)) for c in order[i:i + args.seq_len]]
-            for i in range(0, len(order), args.seq_len)]
+    n = args.seq_len or len(codes)
+    return [[(c, rng.uniform(*args.segment)) for c in order[i:i + n]]
+            for i in range(0, len(order), n)]
 
 
 def greedy_no_adjacent(codes, reps, rng):
@@ -170,7 +172,8 @@ class Cues(QtWidgets.QLabel):
         n = sum(len(run) for run in self.schedule)
         mins = (sum(s for run in self.schedule for _, s in run)
                 + len(self.schedule) * (self.pause_mean() + args.preview + 0.5)) / 60
-        what = (f"{len(self.schedule)} sequences of up to {args.seq_len} moves"
+        k = len(self.schedule)
+        what = (f"{k} sequence{'s' * (k != 1)} of up to {max(map(len, self.schedule))} moves"
                 if args.protocol == "sequence" else f"{n} moves")
         self.show_text(f"Block {args.block}: {what}, about {mins:.0f} min.<br><br>"
                        "<span style='font-size:32pt'>Keep repeating each move until the cue "
