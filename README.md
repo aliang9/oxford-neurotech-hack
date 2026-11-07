@@ -1,1 +1,194 @@
 # oxford-neurotech-hack
+
+Live EEG and motion from a g.tec **BCI Core-8** (8 ch, 250 Hz, Bluetooth LE) on macOS, via
+g.tec's [g.Pype](https://gpype.gtec.at/) SDK, plus a cue program and an offline decoder for
+task experiments.
+
+```
+tasks.py ──UDP markers──┐
+BCICore ────────────────┴─> Router ─┬─> HDF5 file (raw EEG + markers)        acquire.py --record
+   │  [--oscar artifact removal]    └─> 50 Hz notch ─> 1–40 Hz bandpass ─┬─> live scope
+   │                                                                     └─> LSL "core8_eeg"
+   └─ accelerometer / gyroscope ─────────────────────────────────────────────> LSL "core8_motion"
+
+decode.py:  HDF5 ─> zero-phase filters ─> epochs per task ─> band power ─> LDA + cross-validation
+receive.py: any LSL stream ─> per-channel mean/std every second (+ optional CSV)
+```
+
+| file | what it does |
+|---|---|
+| `acquire.py` | headset → filters → scope + LSL; records raw EEG + task markers with `--record` |
+| `motion.py` | `BCICore` subclass that also publishes the accelerometer and gyroscope over LSL |
+| `tasks.py` | full-screen task cues, randomised trials, sends markers to `acquire.py` |
+| `decode.py` | offline decoding of the recorded tasks, with chance level and a permutation test |
+| `receive.py` | standalone pylsl reader, e.g. for checking streams or saving them to CSV |
+
+## Setup
+
+Python 3.10–3.14 (tested with Homebrew Python 3.13, gpype 4.1.0).
+
+```bash
+python3.13 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+git clone https://github.com/gtec-medical-engineering/gpype ../gpype   # examples, for reference
+```
+
+### Bluetooth permission (macOS)
+
+macOS grants Bluetooth to the **app that launches Python**, not to Python itself.
+
+1. Open **System Settings → Privacy & Security → Bluetooth**.
+2. Turn on the app you run the scripts from (Terminal, iTerm, VS Code, PyCharm…).
+   If it isn't listed, run `acquire.py` once and macOS should ask. Otherwise add it with **+**.
+3. **Quit and reopen that app.** The permission only applies to a fresh process.
+
+Without this, the BLE scan quietly returns nothing and it looks like the headset is off.
+
+## Running an experiment session
+
+Switch on the headset. g.Pype finds it by BLE scan, so you do not pair it in System Settings.
+
+```bash
+# Terminal 1: acquire + record. Leave it running for the whole session.
+.venv/bin/python acquire.py --record data/p01_s1.h5          # add --oscar for artifact removal
+
+# Check signal quality in the scope first (see Troubleshooting). Then, in terminal 2:
+.venv/bin/python tasks.py --tasks rest_open rest_closed math --trials 15 --log data/p01_s1_tasks.csv
+
+# When tasks.py says "Done", close the scope window to finish the file. Then:
+.venv/bin/python decode.py data/p01_s1_*.h5
+```
+
+`--record` adds a date and time to the file name, e.g. `data/p01_s1_20261107_150102_123.h5`.
+
+- **Tasks** (`tasks.py --tasks …`): `rest_open`, `rest_closed`, `left_hand`, `right_hand` and
+  `feet` (motor imagery), `math` (serial subtraction), `words` (word generation). The marker
+  codes are fixed in `TASKS` in `tasks.py`. Add your own there.
+- **Trial structure:** fixation cross for 2–3 s, then the cue for `--duration` s (default 5),
+  with a beep at the start and end of each cue. There's a break every 20 trials. Press Space
+  to start or continue, Esc to abort. The trial order is randomised and balanced, and written
+  to the `--log` CSV.
+- **Decoding:** `decode.py` epochs each task from 0.5 to 5 s after the cue and drops epochs
+  over 150 µV peak-to-peak. Before rejecting, it prints each channel's median epoch
+  peak-to-peak and drops channels over 2× the median (`--bad-factor`, or name them with
+  `--exclude Fz C4`). `--tasks math rest_open` decodes a subset of the tasks.
+  It takes log theta, alpha, beta and gamma power per channel
+  (32 features) and runs a shrinkage-LDA classifier with 5-fold CV. It prints accuracy,
+  chance level, a permutation p-value, the confusion matrix and the most discriminative
+  features. Pass several files to pool sessions.
+
+### Choosing tasks for 8 channels (Fz C3 Cz C4 Pz PO7 POz PO8)
+
+- **Start with `rest_open` vs `rest_closed`.** Closing the eyes raises alpha (8–13 Hz) at
+  PO7/POz/PO8, which almost always decodes. If this fails, fix the setup before trying
+  harder tasks.
+- **`math` / `words` vs rest** is usually decodable from frontal theta and changes in
+  posterior alpha.
+- **`left_hand` vs `right_hand` imagery** shows up as mu/beta desynchronisation at C3/C4.
+  It is weak without training. Expect near chance in a first session.
+- **Watch for confounds.** A decoder will happily learn from eye movements, blinks, jaw
+  tension or head motion if they differ between tasks, e.g. eyes moving while reading the
+  math cue. If the top features are Fz or gamma, or the motion stream differs between
+  tasks, suspect artifacts. Keep cues short and have the participant fixate and stay still.
+- **Aim for ≥ 30 clean trials per class.** With 15 per class, accuracies swing a lot, so
+  rely on the permutation p-value.
+
+## Artifacts: what's built in
+
+- **OSCAR** (`acquire.py --oscar`) is g.tec's real-time artifact removal, built into
+  g.Pype's amplifier sources (`BCICore(enable_oscar=True)`). Its key is bundled with gpype.
+  - g.Tec doesn't document the algorithm.
+  - In my synthetic test (`OscarLive` directly, 8 ch at 250 Hz), it cut RMS error ~13× for
+    150 µV frontal blinks, ~5× for broadband muscle bursts and ~14× for electrode pops,
+    while keeping 10 Hz alpha.
+  - It adds 83 samples (0.33 s) of delay. gpype's changelog says events are held back by
+    that delay too, so markers should stay aligned. I couldn't check this without the
+    headset: blink on cue once and look at the recording.
+  - Whether to use it: record with and without OSCAR on the same task and compare decoding.
+    Removing "artifacts" can also remove real signal, and it can hide the confounds above.
+- **Filtering** (always on): 48–52 Hz bandstop for UK mains, and a 1–40 Hz bandpass. The
+  bandpass removes slow drift (sweat, movement) and most EMG above 40 Hz.
+- **Epoch rejection** in `decode.py` (`--reject`, µV peak-to-peak): the simplest method from
+  the Bitbrain artifact overview. It drops contaminated trials instead of trying to repair them.
+- **Not built in**: ICA, ASR and regression against EOG. With 8 channels and no EOG
+  electrode, ICA is of limited use. MNE-Python (`pip install mne`) has these if needed.
+  gpype's example `s4e9_into_mne.py` shows the hand-off.
+
+## Accelerometer and gyroscope
+
+gpype's `BCICore` keeps only the EEG columns of each sample. The driver also delivers ACC, GYR,
+battery and counter columns, which `BCICore` discards. `motion.py` subclasses it and
+publishes any ACC/GYR columns as a second LSL stream, **`core8_motion`** (type `Motion`,
+250 Hz, labels `AccX..AccZ, GyrX..GyrZ`):
+
+```bash
+.venv/bin/python receive.py --stream-name core8_motion --save data/p01_s1_motion.csv
+```
+
+- **Channel map:** at connect, `acquire.py` prints the device's channel map. If it says the
+  headset reports no ACC/GYR channels, there's nothing to publish.
+- **Units:** whatever the driver delivers. For the Unicorn, gpype documents g and deg/s.
+  This isn't verified for the Core-8; check by tilting the headset (gravity ≈ 1 g).
+- **Fragility:** it hooks two private gpype methods (`_resolve_channels`, `_assemble`), so
+  `requirements.txt` pins gpype to 4.1.x.
+
+## LSL streams and timestamps
+
+- `core8_eeg`: 9 × float64 at 250 Hz, filtered, µV. Channels: `Fz C3 Cz C4 Pz PO7 POz PO8`,
+  plus `Ch09`, the task marker (0, or the task code at cue onset).
+- `core8_motion`: see above.
+
+**Clock caveat.** gpype stamps LSL samples with `time.monotonic()`, not with pylsl's
+`local_clock()`. On the test Mac the two differed by ~19 hours. The two streams above share
+gpype's clock, so they line up with each other. A third-party LSL stream that uses default
+timestamps will not line up with them, e.g. markers from PsychoPy recorded in LabRecorder.
+That's why task markers go **into** the pipeline over UDP instead of as a separate LSL
+marker stream.
+
+Reading from your own code:
+
+```python
+from pylsl import StreamInlet, resolve_byprop
+inlet = StreamInlet(resolve_byprop("name", "core8_eeg", timeout=10)[0])
+samples, timestamps = inlet.pull_chunk()
+```
+
+## Testing without the headset
+
+`acquire.py --simulate` swaps the headset for gpype's signal generator, with the same channel
+names, markers and LSL streams. It has no motion stream. A session recorded this way should
+decode at chance, which is a useful null check.
+
+## Troubleshooting
+
+**Headset not discovered**
+- Check the Bluetooth permission above, and that you restarted the terminal/IDE afterwards.
+- Bluetooth is on, the headset is charged and on, and within a few metres.
+- Nothing else is connected to it (g.tec's own app, another laptop). A BLE device accepts one connection.
+- Several g.tec headsets in range? Pass `--serial` (printed on the device).
+- gpype's log is in `~/Library/Application Support/gtec/gPype`. Connection errors there name the cause.
+
+**Flat or noisy channels**
+- Flat (~0 µV): the electrode isn't touching the scalp, or the headset isn't streaming. Re-seat it.
+- Big drifts or saturation: poor contact. Part the hair and rewet or regel the electrodes. Wait a minute for them to settle.
+- Strong 50 Hz noise despite the notch: move away from chargers and mains cables, and run the laptop on battery.
+- Bursts of large noise: blinks show at Fz, jaw clenching and muscle tension everywhere. Relax and sit still.
+- The scope's amplitude control rescales the view. Real EEG is roughly ±10–50 µV.
+
+**No markers in the recording**
+- Start `acquire.py` before `tasks.py`, and keep it running until `tasks.py` finishes.
+- The ports must match: `--marker-port` on `acquire.py` and `--port` on `tasks.py` (default 5005).
+  Ports below 1024 need root on macOS.
+- Markers appear as coloured lines in the scope at each cue.
+
+**LSL stream not found (`receive.py`)**
+- Start `acquire.py` first and wait for the scope to show data.
+- The names must match: `--stream-name` must be the same in both scripts.
+- On a different machine: same network, and the firewall must allow LSL (UDP 16571 for
+  discovery, TCP/UDP 16572–16604 for data).
+- Increase the search time: `receive.py --timeout 30`.
+
+## Licence note
+
+g.Pype is under the g.tec Non-Commercial License. Recordings are stamped `NON-COMMERCIAL USE`.
+This is fine for research and hackathons, but check before using it commercially.
