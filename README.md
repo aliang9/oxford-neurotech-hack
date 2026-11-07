@@ -176,6 +176,10 @@ two discrete blocks this made no clear difference (there, the edge windows are m
 around a cue, not move → move); compare the two with the replay scores below once you have
 sequence blocks.
 
+**Leaving out an electrode.** `dance.train ... --exclude POz` (several allowed, any case) drops
+every feature that uses that electrode: its 8 per-channel features and its 7 correlations. The
+saved model remembers this, and `dance.live` drops the same features, so nothing else changes.
+
 **Evaluation.** Leave-one-block-out, so overlapping windows from one block are never in both
 train and test. It prints accuracy and macro-F1 for the random forest and the majority
 baseline, the confusion matrix, a per-class report and the top features.

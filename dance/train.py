@@ -26,7 +26,7 @@ from sklearn.metrics import accuracy_score, classification_report, confusion_mat
 from sklearn.model_selection import GroupKFold, LeaveOneGroupOut, cross_val_predict
 
 from . import config as cfg
-from .features import extract, feature_names, windows
+from .features import extract, feature_names, keep_mask, windows
 from .stream import load_block, sample_labels
 
 
@@ -39,7 +39,17 @@ def parse_args(argv=None):
     ap.add_argument("--moves", nargs="+", default=None, help="only use these moves")
     ap.add_argument("--purity", type=float, default=cfg.MIN_PURITY,
                     help="fraction of a window that must be one move (default: %(default).2f)")
+    ap.add_argument("--exclude", nargs="+", default=[], metavar="CH", type=channel,
+                    help="leave these electrodes out, e.g. a dead one: --exclude POz")
     return ap.parse_args(argv)
+
+
+def channel(name):
+    """Electrode name, case-insensitive."""
+    for ch in cfg.CHANNELS:
+        if ch.lower() == name.lower():
+            return ch
+    raise argparse.ArgumentTypeError(f"no electrode '{name}'; choose from {', '.join(cfg.CHANNELS)}")
 
 
 def make_model():
@@ -129,6 +139,10 @@ def main(argv=None):
     if args.holdout:
         print(f"Holding out blocks {args.holdout}: not used for evaluation or training.")
     X, y, blocks, trials = load_windows(paths, args.moves, args.purity)
+    mask = keep_mask(args.exclude)
+    X = X[:, mask]
+    if args.exclude:
+        print(f"Excluding {', '.join(args.exclude)}: {mask.sum()} of {len(mask)} features left.")
     names, counts = np.unique(y, return_counts=True)
     print(f"\n{len(y)} windows: " + ", ".join(f"{n} {c}" for n, c in zip(names, counts)))
 
@@ -136,11 +150,12 @@ def main(argv=None):
 
     model = make_model().fit(X, y)
     top = np.argsort(model.feature_importances_)[::-1][:10]
-    print("Top features: " + ", ".join(feature_names()[i] for i in top))
+    names = np.array(feature_names())[mask]
+    print("Top features: " + ", ".join(names[i] for i in top))
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     joblib.dump({"model": model, "classes": list(model.classes_),
-                 "blocks": sorted(set(blocks.tolist()))}, args.out)
+                 "blocks": sorted(set(blocks.tolist())), "exclude": args.exclude}, args.out)
     print(f"Model saved to {args.out}")
 
 

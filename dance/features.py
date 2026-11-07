@@ -44,6 +44,14 @@ def extract(window):
     return np.concatenate([rms, diff_rms, *bands, corr])
 
 
+def keep_mask(exclude=()):
+    """Boolean mask over the features: False for any feature that uses an excluded channel."""
+    exclude = set(exclude)
+    per_channel = [ch for _ in ["rms", "diff_rms", *BANDS] for ch in cfg.CHANNELS]
+    pairs = [{cfg.CHANNELS[i], cfg.CHANNELS[j]} for i, j in zip(*PAIRS)]
+    return np.array([ch not in exclude for ch in per_channel] + [not (p & exclude) for p in pairs])
+
+
 def feature_names():
     per_channel = ["rms", "diff_rms", *BANDS]
     names = [f"{ch}:{kind}" for kind in per_channel for ch in cfg.CHANNELS]

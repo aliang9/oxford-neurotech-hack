@@ -23,7 +23,7 @@ import joblib
 import numpy as np
 
 from . import config as cfg
-from .features import extract, windows
+from .features import extract, keep_mask, windows
 from .stream import LSLSource, ReplaySource, sample_labels, segments
 
 
@@ -32,6 +32,7 @@ class Decoder:
 
     def __init__(self, bundle):
         self.model = bundle["model"]
+        self.mask = keep_mask(bundle.get("exclude", []))  # electrodes left out in training
         self.classes = list(self.model.classes_)
         self.buffer = deque(maxlen=cfg.WIN)
         self.n = 0              # samples seen so far
@@ -53,7 +54,7 @@ class Decoder:
                 self.step(t)
 
     def step(self, t):
-        p = self.model.predict_proba(extract(np.array(self.buffer))[None])[0]
+        p = self.model.predict_proba(extract(np.array(self.buffer))[self.mask][None])[0]
         a = cfg.SMOOTH_ALPHA
         self.probs = p if self.probs is None else a * p + (1 - a) * self.probs
 
@@ -88,9 +89,9 @@ def runs(decoder):
     return [s for s in segments if s[2] is not None]
 
 
-def classify_segment(model, samples):
+def classify_segment(model, samples, mask):
     """Moves ranked by probability for a user-marked stretch of samples (None if too short)."""
-    features = [extract(w) for _, w in windows(samples)]
+    features = [extract(w)[mask] for _, w in windows(samples)]
     if not features:
         return None
     probs = model.predict_proba(np.array(features)).mean(axis=0)
@@ -258,7 +259,7 @@ def run_dashboard(source, decoder, scale, discrete):
         times = np.concatenate(state["capture_times"]) if state["capture_times"] else []
         state["capture"] = None
         capture_label.setStyleSheet("")
-        ranked = classify_segment(decoder.model, samples)
+        ranked = classify_segment(decoder.model, samples, decoder.mask)
         if ranked is None:
             capture_label.setText(f"Too short: need at least {cfg.WIN_S:g} s. "
                                   "Space: start capturing a move")
@@ -347,7 +348,10 @@ def main(argv=None):
     if discrete and args.no_gui:
         ap.error("--no-gui only works with --mode continuous (discrete needs Space in the dashboard)")
 
-    decoder = Decoder(joblib.load(args.model))
+    bundle = joblib.load(args.model)
+    decoder = Decoder(bundle)
+    if bundle.get("exclude"):
+        print(f"Model trained without {', '.join(bundle['exclude'])}.")
     source = ReplaySource(args.replay, args.speed) if args.replay else LSLSource(args.stream)
     print(f"Classes: {', '.join(decoder.classes)}.")
     print("Space to start / stop a capture." if discrete else "Transitions (LSL time, since start):")
