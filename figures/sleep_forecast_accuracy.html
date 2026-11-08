@@ -1,0 +1,187 @@
+<title>Sleep Stage Forecast Accuracy</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<style>
+  /* Layout: one centred column — headline, one chart, one footnote. Nothing else. */
+  :root {
+    --bg: #fcfcfb;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --model: #2a78d6;
+    --base: #c9c7bf;
+    --tip-bg: #0b0b0b;
+    --tip-fg: #fcfcfb;
+    --display: "Sora", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --axis: #383835; --model: #3987e5; --base: #55544f;
+      --tip-bg: #f0efec; --tip-fg: #1a1a19; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --model: #3987e5; --base: #55544f;
+    --tip-bg: #f0efec; --tip-fg: #1a1a19; color-scheme: dark;
+  }
+  body { background: var(--bg); color: var(--ink); font-family: var(--body); }
+  main {
+    max-width: 760px; margin: 0 auto;
+    padding-block: 48px 40px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    display: flex; flex-direction: column; gap: 24px;
+  }
+  .eyebrow { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0; }
+  h1 {
+    font-family: var(--display); font-weight: 600; font-size: clamp(26px, 4.6vw, 38px);
+    line-height: 1.15; margin: 0; text-wrap: balance; letter-spacing: -0.01em;
+  }
+  .lede { font-size: 17px; line-height: 1.5; color: var(--ink-2); margin: 0; max-width: 60ch; }
+  .lede strong { color: var(--ink); font-weight: 500; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 14px; color: var(--ink-2); }
+  .legend span { display: inline-flex; align-items: center; gap: 8px; }
+  .sw { width: 14px; height: 14px; border-radius: 4px; display: inline-block; }
+  .sw.model { background: var(--model); }
+  .sw.base { background: var(--base); }
+  .sw.chance { height: 0; width: 18px; border-top: 2px dashed var(--muted); border-radius: 0; }
+  .chart { position: relative; }
+  svg { display: block; width: 100%; height: auto; overflow: visible; }
+  svg text { font-family: var(--body); }
+  .tip {
+    position: absolute; pointer-events: none; background: var(--tip-bg); color: var(--tip-fg);
+    font-size: 13px; line-height: 1.4; padding: 8px 10px; border-radius: 6px;
+    transform: translate(-50%, calc(-100% - 10px)); white-space: nowrap;
+  }
+  .foot { font-size: 13px; line-height: 1.55; color: var(--muted); margin: 0; max-width: 70ch; }
+</style>
+
+<main>
+  <p class="eyebrow">Smart alarm · sleep forecasting model</p>
+  <h1>Our model predicts which sleep stage you'll be in, up to an hour ahead</h1>
+  <p class="lede">
+    The further ahead it looks, the bigger its lead. Forty-five minutes out, it names the
+    right stage <strong>49%</strong> of the time, against <strong>37%</strong> for assuming
+    nothing changes and <strong>20%</strong> for a random guess.
+  </p>
+
+  <div class="legend" aria-hidden="true">
+    <span><i class="sw model"></i>Our model</span>
+    <span><i class="sw base"></i>Assume nothing changes</span>
+    <span><i class="sw chance"></i>Random guess (1 in 5 stages)</span>
+  </div>
+
+  <div class="chart" id="chart">
+    <div class="tip" id="tip" hidden></div>
+  </div>
+
+  <table hidden id="data-table">
+    <caption>Accuracy of the predicted sleep stage, by how far ahead</caption>
+    <tr><th>Minutes ahead</th><th>Our model</th><th>Assume nothing changes</th></tr>
+  </table>
+
+  <p class="foot">
+    Accuracy is the share of predictions where the model's most likely stage
+    (wake, N1, N2, deep sleep N3, or REM) matched the stage scored by sleep experts.
+    Tested on 153 nights from 78 people in the public Sleep-EDF dataset, each scored by a
+    model that never saw that person (5-fold cross-validation). The model was given
+    expert-scored stages up to the moment of prediction. With stages read live from a
+    headset, accuracy will be lower.
+  </p>
+</main>
+
+<script>
+(() => {
+  const DATA = [
+    { h: 5,  model: 71.3, base: 69.9 },
+    { h: 10, model: 62.7, base: 60.0 },
+    { h: 15, model: 57.0, base: 53.5 },
+    { h: 30, model: 51.9, base: 41.4 },
+    { h: 45, model: 49.1, base: 37.1 },
+    { h: 60, model: 47.9, base: 37.1 },
+  ];
+  const CHANCE = 20;
+
+  const W = 680, H = 360, M = { t: 28, r: 8, b: 48, l: 44 };
+  const iw = W - M.l - M.r, ih = H - M.t - M.b;
+  const yMax = 80;
+  const y = v => M.t + ih - (v / yMax) * ih;
+  const group = iw / DATA.length;
+  const barW = Math.min(58, group * 0.3), gap = 2;
+
+  const ns = "http://www.w3.org/2000/svg";
+  const el = (name, attrs, text) => {
+    const e = document.createElementNS(ns, name);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (text != null) e.textContent = text;
+    return e;
+  };
+  // Bar with 4px rounded top, square base on the axis.
+  const bar = (x, v, w) => {
+    const top = y(v), base = y(0), r = Math.min(4, (base - top) / 2);
+    return `M${x},${base} V${top + r} Q${x},${top} ${x + r},${top} H${x + w - r} Q${x + w},${top} ${x + w},${top + r} V${base} Z`;
+  };
+
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img",
+    "aria-label": "Bar chart: accuracy of our model versus assuming nothing changes, at 5, 10, 15 and 30 minutes ahead" });
+
+  for (const v of [0, 20, 40, 60, 80]) {
+    svg.append(el("line", { x1: M.l, x2: W - M.r, y1: y(v), y2: y(v),
+      stroke: v === 0 ? "var(--axis)" : "var(--grid)", "stroke-width": 1 }));
+    svg.append(el("text", { x: M.l - 10, y: y(v) + 4, "text-anchor": "end",
+      "font-size": 12, fill: "var(--muted)", style: "font-variant-numeric: tabular-nums" }, v + "%"));
+  }
+
+  const tip = document.getElementById("tip");
+  const chart = document.getElementById("chart");
+  const table = document.getElementById("data-table");
+
+  DATA.forEach((d, i) => {
+    const cx = M.l + group * i + group / 2;
+    const xm = cx - barW - gap / 2, xb = cx + gap / 2;
+    const g = el("g", { tabindex: 0, style: "cursor: default; outline: none" });
+    g.append(el("path", { d: bar(xm, d.model, barW), fill: "var(--model)" }));
+    g.append(el("path", { d: bar(xb, d.base, barW), fill: "var(--base)" }));
+    g.append(el("text", { x: xm + barW / 2, y: y(d.model) - 8, "text-anchor": "middle",
+      "font-size": 15, "font-weight": 500, fill: "var(--ink)" }, Math.round(d.model) + "%"));
+    g.append(el("text", { x: xb + barW / 2, y: y(d.base) - 8, "text-anchor": "middle",
+      "font-size": 13, fill: "var(--muted)" }, Math.round(d.base) + "%"));
+    g.append(el("text", { x: cx, y: H - M.b + 22, "text-anchor": "middle",
+      "font-size": 14, fill: "var(--ink-2)" }, d.h + " min"));
+    // Hit target larger than the bars.
+    g.append(el("rect", { x: cx - group / 2, y: M.t, width: group, height: ih, fill: "transparent" }));
+    const show = () => {
+      const r = svg.getBoundingClientRect(), s = r.width / W;
+      tip.innerHTML = `<b>${d.h} minutes ahead</b><br>Our model: ${d.model.toFixed(1)}%<br>Assume nothing changes: ${d.base.toFixed(1)}%`;
+      tip.style.left = Math.max(90, Math.min(r.width - 90, cx * s)) + "px";
+      tip.style.top = y(Math.max(d.model, d.base)) * s - 22 + "px";
+      tip.hidden = false;
+    };
+    g.addEventListener("mouseenter", show);
+    g.addEventListener("focus", show);
+    g.addEventListener("mouseleave", () => (tip.hidden = true));
+    g.addEventListener("blur", () => (tip.hidden = true));
+    svg.append(g);
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${d.h}</td><td>${d.model.toFixed(1)}%</td><td>${d.base.toFixed(1)}%</td>`;
+    table.append(tr);
+  });
+
+  svg.append(el("line", { x1: M.l, x2: W - M.r, y1: y(CHANCE), y2: y(CHANCE),
+    stroke: "var(--muted)", "stroke-width": 2, "stroke-dasharray": "5 5", "pointer-events": "none" }));
+  svg.append(el("text", { x: W - M.r, y: y(CHANCE) - 8, "text-anchor": "end",
+    "font-size": 12, fill: "var(--muted)" }, "Random guess"));
+
+  svg.append(el("text", { x: M.l + iw / 2, y: H - 6, "text-anchor": "middle",
+    "font-size": 13, fill: "var(--muted)" }, "How far ahead the model predicts"));
+
+  chart.prepend(svg);
+})();
+</script>

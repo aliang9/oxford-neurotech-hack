@@ -1,0 +1,171 @@
+<title>When the Alarm Rings</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@700;800&family=Nunito+Sans:opsz,wght@6..12,400;6..12,600&display=swap">
+<style>
+  /* Layout: one card on warm paper, headline above, one annotated chart, one footnote. */
+  :root {
+    --paper: #FBF7EE; --card: #FFFFFF; --ink: #1F1F1F; --ink-2: #4A4843; --muted: #7D7A73;
+    --line: #E6E1D6; --wait: #2F4B7C; --keep-tint: rgba(131, 169, 219, 0.14);
+    --bell: #F4C542; --deadline: #9A968E;
+    --s-N1: #B9D0EE; --s-N2: #83A9DB; --s-N3: #2F4B7C; --s-REM: #E8735A;
+    --on-N1: #1F1F1F; --on-N2: #1F1F1F; --on-N3: #FFFFFF; --on-REM: #1F1F1F;
+    --display: "Nunito", "Arial Rounded MT Bold", system-ui, sans-serif;
+    --body: "Nunito Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #191917; --card: #23231F; --ink: #F1EEE6; --ink-2: #C9C5BB; --muted: #94908A;
+      --line: #36352F; --wait: #A9C4E8; --keep-tint: rgba(131, 169, 219, 0.12);
+      --deadline: #8A867E; --s-N3: #4F72B0; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #191917; --card: #23231F; --ink: #F1EEE6; --ink-2: #C9C5BB; --muted: #94908A;
+    --line: #36352F; --wait: #A9C4E8; --keep-tint: rgba(131, 169, 219, 0.12);
+    --deadline: #8A867E; --s-N3: #4F72B0; color-scheme: dark;
+  }
+  body { background: var(--paper); color: var(--ink); font-family: var(--body); font-size: 16px; }
+  main {
+    max-width: 900px; margin: 0 auto; padding-block: 40px 44px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    display: flex; flex-direction: column; gap: 22px;
+  }
+  .eyebrow { margin: 0; font: 700 13px/1 var(--display); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+  h1 { margin: 0; font: 800 clamp(28px, 5vw, 40px)/1.12 var(--display); text-wrap: balance; }
+  .lede { margin: 0; font-size: 18px; line-height: 1.55; color: var(--ink-2); max-width: 64ch; }
+  .card { background: var(--card); border: 2px solid var(--ink); border-radius: 24px; padding: 22px 22px 16px; }
+  .key { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 14px; color: var(--ink-2); margin-bottom: 6px; }
+  .key span { display: inline-flex; align-items: center; gap: 8px; }
+  .key svg { width: 30px; height: 10px; }
+  .chart svg { display: block; width: 100%; height: auto; }
+  svg text { font-family: var(--body); }
+  .fine { margin: 0; font-size: 13px; line-height: 1.6; color: var(--muted); max-width: 80ch; }
+</style>
+
+<main>
+  <p class="eyebrow">Tandem smart alarm · how it decides</p>
+  <h1>It waits for an easy moment, then rings</h1>
+  <p class="lede">Every 30 seconds inside your wake-up window, the alarm compares two things: how rough waking you
+    right now would be, and how good your chances are of a gentler moment before your latest time. It rings the
+    first time waking now wins.</p>
+
+  <section class="card">
+    <div class="key" aria-hidden="true">
+      <span><svg viewBox="0 0 30 10"><line x1="1" y1="5" x2="29" y2="5" stroke="var(--ink)" stroke-width="3.5" stroke-linecap="round"/></svg>Waking you now</span>
+      <span><svg viewBox="0 0 30 10"><line x1="1" y1="5" x2="29" y2="5" stroke="var(--wait)" stroke-width="2.5" stroke-dasharray="6 5" stroke-linecap="round"/></svg>Waiting for a better moment</span>
+    </div>
+    <div class="chart" id="chart"></div>
+  </section>
+
+  <p class="fine">Illustration with idealised data, drawn to explain how the decision works. It is not a recorded
+    night. In the app, both lines are recalculated every 30 seconds from the model's forecast of your sleep, and the
+    alarm always rings at your latest wake-up time.</p>
+</main>
+
+<script>
+(() => {
+  // Idealised night: minutes after 06:00 -> stage
+  const STAGES = [
+    { a: 0,  b: 5,  k: "N2",  label: "Light sleep" },
+    { a: 5,  b: 13, k: "N3",  label: "Deep sleep" },
+    { a: 13, b: 18, k: "N2",  label: "Light" },
+    { a: 18, b: 23, k: "N1",  label: "Lightest" },
+    { a: 23, b: 30, k: "REM", label: "REM" },
+  ];
+  const RING = 19;           // alarm rings here
+  const LATEST = 30;
+  const levelOf = { N1: 1.0, N2: 3.2, N3: 9.0, REM: 4.2 };
+  // smooth "waking now" curve: blend stage levels with soft edges, plus a little lost-sleep cost
+  const sig = x => 1 / (1 + Math.exp(-x));
+  const wakeNow = t => {
+    let v = levelOf.N2;
+    for (let i = 1; i < STAGES.length; i++) {
+      const prev = levelOf[STAGES[i - 1].k], cur = levelOf[STAGES[i].k];
+      v += (cur - prev) * sig((t - STAGES[i].a) * 2.2);
+    }
+    return v + 0.04 * (LATEST - t);
+  };
+  // waiting: gently varying expectation, meeting "waking now" at the latest time
+  const wait = t => 2.55 + 0.35 * Math.sin((t / 30) * Math.PI) + 0.5 * sig((t - 7) * 0.8) * sig((14 - t) * 0.8)
+                    + (wakeNow(LATEST) - 2.55) * Math.pow(t / LATEST, 6);
+
+  const W = 820, H = 470, M = { t: 34, r: 30, b: 112, l: 52 };
+  const iw = W - M.l - M.r, ih = H - M.t - M.b;
+  const yMax = 10.5;
+  const x = t => M.l + (t / 30) * iw;
+  const y = v => M.t + ih - (v / yMax) * ih;
+  const ns = "http://www.w3.org/2000/svg";
+  const el = (n, a, txt) => { const e = document.createElementNS(ns, n); for (const k in a) e.setAttribute(k, a[k]); if (txt != null) e.textContent = txt; return e; };
+  const path = (f, a, b) => { let d = ""; for (let t = a; t <= b + 1e-9; t += 0.1) d += (d ? "L" : "M") + x(t).toFixed(1) + "," + y(f(t)).toFixed(1); return d; };
+
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img",
+    "aria-label": "Illustration: the cost of waking now rises during deep sleep and falls below the cost of waiting when the sleeper reaches the lightest sleep, at which point the alarm rings." });
+
+  // "keep sleeping" zone up to the alarm
+  svg.append(el("rect", { x: x(0), y: M.t, width: x(RING) - x(0), height: ih, fill: "var(--keep-tint)" }));
+  svg.append(el("text", { x: x(0) + 12, y: y(0) - 12, "text-anchor": "start", "font-size": 13, "font-weight": 600,
+    fill: "var(--wait)", "letter-spacing": "0.06em" }, "KEEP SLEEPING"));
+
+  // axes
+  svg.append(el("line", { x1: M.l, x2: W - M.r, y1: y(0), y2: y(0), stroke: "var(--line)", "stroke-width": 1.5 }));
+  svg.append(el("text", { x: M.l - 14, y: M.t + 6, "text-anchor": "end", "font-size": 12, fill: "var(--muted)" }, "harder"));
+  svg.append(el("text", { x: M.l - 14, y: y(0) - 2, "text-anchor": "end", "font-size": 12, fill: "var(--muted)" }, "easier"));
+  svg.append(el("path", { d: `M${M.l - 30},${M.t + 18} L${M.l - 30},${y(0) - 18}`, stroke: "var(--muted)",
+    "stroke-width": 1.5, fill: "none", "marker-start": "url(#arrow)" }));
+  const defs = el("defs", {});
+  const mk = el("marker", { id: "arrow", viewBox: "0 0 10 10", refX: 5, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" });
+  mk.append(el("path", { d: "M0,0 L10,5 L0,10 z", fill: "var(--muted)" }));
+  defs.append(mk);
+  svg.append(defs);
+
+  // lines: solid up to the alarm, faint afterwards (the alarm already rang)
+  svg.append(el("path", { d: path(wait, 0, RING), fill: "none", stroke: "var(--wait)", "stroke-width": 2.5, "stroke-dasharray": "7 6", "stroke-linecap": "round" }));
+  svg.append(el("path", { d: path(wait, RING, LATEST), fill: "none", stroke: "var(--wait)", "stroke-width": 2, "stroke-dasharray": "7 6", opacity: 0.25 }));
+  svg.append(el("path", { d: path(wakeNow, 0, RING), fill: "none", stroke: "var(--ink)", "stroke-width": 3.5, "stroke-linecap": "round", "stroke-linejoin": "round" }));
+  svg.append(el("path", { d: path(wakeNow, RING, LATEST), fill: "none", stroke: "var(--ink)", "stroke-width": 2.5, opacity: 0.18 }));
+
+  // callouts
+  const note = (tx, ty, lines, anchor = "middle", color = "var(--ink-2)") => {
+    lines.forEach((s, i) => svg.append(el("text", { x: tx, y: ty + i * 17, "text-anchor": anchor, "font-size": 14, fill: color }, s)));
+  };
+  note(x(9), y(6.6), ["Deep sleep: waking now", "would be rough, so it waits"]);
+
+  // latest time
+  svg.append(el("line", { x1: x(LATEST), x2: x(LATEST), y1: M.t, y2: y(0), stroke: "var(--deadline)", "stroke-width": 2, "stroke-dasharray": "3 5" }));
+  note(x(LATEST) - 6, M.t + 18, ["Latest time:", "always rings"], "end", "var(--muted)");
+
+  // alarm moment
+  const ry = y(wakeNow(RING));
+  svg.append(el("line", { x1: x(RING), x2: x(RING), y1: M.t + 26, y2: y(0), stroke: "var(--ink)", "stroke-width": 1.5 }));
+  svg.append(el("circle", { cx: x(RING), cy: ry, r: 9, fill: "var(--bell)", stroke: "var(--ink)", "stroke-width": 2.5 }));
+  const bell = el("g", { transform: `translate(${x(RING)}, ${M.t + 4})` });
+  bell.append(el("path", { d: "M-11,14 Q-11,-2 0,-4 Q11,-2 11,14 L14,18 L-14,18 Z", fill: "var(--bell)", stroke: "var(--ink)", "stroke-width": 2, "stroke-linejoin": "round" }));
+  bell.append(el("circle", { cx: 0, cy: 21, r: 3, fill: "var(--ink)" }));
+  svg.append(bell);
+  note(x(RING) + 16, ry + 26, ["Lightest sleep: waking now", "beats waiting. Alarm rings."], "start", "var(--ink)");
+
+  // stage strip
+  const sy = y(0) + 18, sh = 30;
+  for (const s of STAGES) {
+    const after = s.a >= RING;
+    const seg = el("rect", { x: x(s.a) + 1, y: sy, width: x(s.b) - x(s.a) - 2, height: sh, rx: 7,
+      fill: `var(--s-${s.k})`, opacity: s.a >= 23 ? 0.3 : 1 });
+    svg.append(seg);
+    svg.append(el("text", { x: (x(s.a) + x(s.b)) / 2, y: sy + 20, "text-anchor": "middle", "font-size": 13,
+      "font-weight": 600, fill: `var(--on-${s.k})`, opacity: s.a >= 23 ? 0.5 : 1 }, s.label));
+  }
+  svg.append(el("text", { x: M.l - 14, y: sy + 20, "text-anchor": "end", "font-size": 12, fill: "var(--muted)" }, "stage"));
+
+  // time axis
+  for (let m = 0; m <= 30; m += 5) {
+    svg.append(el("text", { x: x(m), y: sy + sh + 24, "text-anchor": "middle", "font-size": 13, fill: "var(--muted)",
+      style: "font-variant-numeric: tabular-nums" }, `06:${String(m).padStart(2, "0")}`));
+  }
+  svg.append(el("text", { x: x(15), y: sy + sh + 52, "text-anchor": "middle", "font-size": 13, fill: "var(--ink-2)" },
+    "Your wake-up window"));
+
+  document.getElementById("chart").append(svg);
+})();
+</script>

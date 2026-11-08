@@ -1,0 +1,331 @@
+<title>Smart Alarm Results</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@700;800&family=Nunito+Sans:opsz,wght@6..12,400;6..12,600&display=swap">
+<style>
+  /* Layout: one column like the app's phone card — headline, slider, three numbers,
+     two charts, how it works, the fine print. Paper, ink outlines, the app's stage colours. */
+  :root {
+    --paper: #FBF7EE; --card: #FFFFFF; --ink: #1F1F1F; --ink-2: #4A4843; --muted: #7D7A73;
+    --line: #E6E1D6; --accent: #83A9DB; --accent-tint: #DCE7F6; --accent-ink: #2F4B7C;
+    --s-W: #F4C542; --s-N1: #B9D0EE; --s-N2: #83A9DB; --s-N3: #2F4B7C; --s-REM: #E8735A;
+    --on-W: #1F1F1F; --on-N1: #1F1F1F; --on-N2: #1F1F1F; --on-N3: #FFFFFF; --on-REM: #1F1F1F;
+    --ref: #9A968E; --tip-bg: #1F1F1F; --tip-fg: #FBF7EE;
+    --display: "Nunito", "Arial Rounded MT Bold", system-ui, sans-serif;
+    --body: "Nunito Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #191917; --card: #23231F; --ink: #F1EEE6; --ink-2: #C9C5BB; --muted: #94908A;
+      --line: #36352F; --accent: #83A9DB; --accent-tint: #2A3546; --accent-ink: #B9D0EE;
+      --s-N3: #4F72B0; --on-N3: #FFFFFF; --ref: #8A867E; --tip-bg: #F1EEE6; --tip-fg: #191917;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #191917; --card: #23231F; --ink: #F1EEE6; --ink-2: #C9C5BB; --muted: #94908A;
+    --line: #36352F; --accent: #83A9DB; --accent-tint: #2A3546; --accent-ink: #B9D0EE;
+    --s-N3: #4F72B0; --on-N3: #FFFFFF; --ref: #8A867E; --tip-bg: #F1EEE6; --tip-fg: #191917;
+    color-scheme: dark;
+  }
+  body { background: var(--paper); color: var(--ink); font-family: var(--body); font-size: 16px; }
+  main {
+    max-width: 820px; margin: 0 auto; padding-block: 40px 48px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    display: flex; flex-direction: column; gap: 28px;
+  }
+  .eyebrow { margin: 0; font: 700 13px/1 var(--display); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+  h1 { margin: 0; font: 800 clamp(28px, 5vw, 42px)/1.12 var(--display); text-wrap: balance; }
+  h2 { margin: 0 0 4px; font: 800 22px/1.2 var(--display); text-wrap: balance; }
+  .lede { margin: 0; font-size: 18px; line-height: 1.55; color: var(--ink-2); max-width: 62ch; }
+  .card { background: var(--card); border: 2px solid var(--ink); border-radius: 22px; padding: 20px 22px; }
+  .card.soft { border-color: var(--line); }
+  .sub { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+
+  /* controls */
+  .controls { display: flex; flex-direction: column; gap: 16px; }
+  .seg { display: inline-flex; border: 2px solid var(--ink); border-radius: 999px; padding: 3px; gap: 3px; flex-wrap: wrap; }
+  .seg button {
+    font: 700 14px var(--display); color: var(--ink); background: transparent; border: 0;
+    border-radius: 999px; padding: 7px 14px; cursor: pointer;
+  }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: #1F1F1F; }
+  .seg button:focus-visible, input[type=range]:focus-visible { outline: 3px solid var(--accent-ink); outline-offset: 2px; }
+  .slider-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .slider-head strong { font: 800 18px var(--display); }
+  .ends { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); gap: 12px; }
+  input[type=range] { width: 100%; accent-color: var(--accent-ink); height: 28px; margin: 0; }
+  .equiv { margin: 0; font-size: 15px; color: var(--ink-2); }
+  .equiv b { color: var(--ink); }
+
+  /* stat tiles */
+  .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  @media (max-width: 640px) { .tiles { grid-template-columns: 1fr; } }
+  .tile { background: var(--card); border: 2px solid var(--ink); border-radius: 20px; padding: 16px 18px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .tile .k { font-size: 14px; color: var(--ink-2); line-height: 1.35; }
+  .tile .v { font: 800 40px/1 var(--display); }
+  .tile .v small { font-size: 18px; font-weight: 700; margin-left: 2px; }
+  .tile .c { font-size: 13px; color: var(--muted); line-height: 1.4; }
+
+  /* stacked bars */
+  .rows { display: flex; flex-direction: column; gap: 16px; margin-top: 14px; }
+  .row-head { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; margin-bottom: 6px; flex-wrap: wrap; }
+  .row-head .name { font: 800 15px var(--display); }
+  .row-head .lost { color: var(--ink-2); }
+  .row.ours .name::after { content: " ●"; color: var(--accent); }
+  .bar { display: flex; gap: 2px; height: 34px; }
+  .bar span {
+    display: flex; align-items: center; justify-content: center; min-width: 0; overflow: hidden;
+    font: 700 13px var(--display); white-space: nowrap; transition: flex-basis 0.35s ease;
+  }
+  .bar span:first-child { border-radius: 8px 0 0 8px; }
+  .bar span:last-child { border-radius: 0 8px 8px 0; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--ink-2); margin-top: 12px; }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 4px; margin-right: 6px; vertical-align: -1px; }
+
+  /* trade-off chart */
+  .chart { position: relative; margin-top: 10px; }
+  svg { display: block; width: 100%; height: auto; overflow: visible; }
+  svg text { font-family: var(--body); }
+  .tip { position: absolute; pointer-events: none; background: var(--tip-bg); color: var(--tip-fg); font-size: 13px; line-height: 1.4; padding: 7px 10px; border-radius: 8px; transform: translate(-50%, calc(-100% - 12px)); white-space: nowrap; z-index: 2; }
+
+  /* how it works */
+  .steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  @media (max-width: 640px) { .steps { grid-template-columns: 1fr; } }
+  .step { background: var(--card); border: 2px solid var(--line); border-radius: 20px; padding: 16px 18px; min-width: 0; }
+  .step .n { display: inline-flex; width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--ink); align-items: center; justify-content: center; font: 800 14px var(--display); background: var(--accent-tint); }
+  .step h3 { margin: 10px 0 6px; font: 800 18px var(--display); }
+  .step p { margin: 0; font-size: 15px; line-height: 1.5; color: var(--ink-2); }
+  .fine { margin: 0; font-size: 13px; line-height: 1.6; color: var(--muted); max-width: 80ch; }
+  @media (prefers-reduced-motion: reduce) { .bar span { transition: none; } }
+</style>
+
+<main>
+  <p class="eyebrow">Smart alarm · results on held-out nights, people asleep the whole window</p>
+  <h1>Wakes you at a better moment, for a few minutes of sleep</h1>
+  <p class="lede" id="lede"></p>
+
+  <section class="card controls" aria-label="Settings">
+    <div>
+      <div class="seg" role="group" aria-label="Sleep staging input">
+        <button type="button" data-input="stager" aria-pressed="true">Today's headset (simulated)</button>
+        <button type="button" data-input="labels" aria-pressed="false">Perfect sleep staging</button>
+      </div>
+    </div>
+    <div>
+      <div class="slider-head">
+        <label for="sv"><strong>How much does a minute of sleep matter?</strong></label>
+        <span class="sub" id="sv-val"></span>
+      </div>
+      <input type="range" id="sv" min="0" max="14" step="1" value="5" aria-describedby="equiv">
+      <div class="ends"><span>Wake me gently</span><span>Protect every minute</span></div>
+    </div>
+    <p class="equiv" id="equiv"></p>
+  </section>
+
+  <section class="tiles" aria-live="polite">
+    <div class="tile">
+      <span class="k">Woken from the lightest sleep (N1), the easiest stage to wake from</span>
+      <span class="v" id="t-light"></span>
+      <span class="c" id="t-light-c"></span>
+    </div>
+    <div class="tile">
+      <span class="k">Woken from deep sleep (N3), the groggiest wake-up</span>
+      <span class="v" id="t-deep"></span>
+      <span class="c" id="t-deep-c"></span>
+    </div>
+    <div class="tile">
+      <span class="k">Sleep given up, on average</span>
+      <span class="v" id="t-lost"></span>
+    </div>
+  </section>
+
+  <section class="card soft">
+    <h2>Which sleep stage people were woken from</h2>
+    <p class="sub" id="rows-sub"></p>
+    <div class="rows" id="rows"></div>
+    <div class="legend" id="legend"></div>
+  </section>
+
+  <section class="card soft">
+    <h2>The trade-off the slider controls</h2>
+    <p class="sub">Each dot on the blue line is one slider setting. Up is gentler wake-ups; right is more sleep given up.</p>
+    <div class="chart" id="chart"><div class="tip" id="tip" hidden></div></div>
+  </section>
+
+  <section>
+    <h2>How it works</h2>
+    <p class="sub" style="margin-bottom:14px">Three steps, repeated every 30 seconds through the night.</p>
+    <div class="steps">
+      <div class="step"><span class="n">1</span><h3>Track</h3>
+        <p>The headset scores each 30-second stretch of EEG as a probability for each of five stages: awake, N1, N2, deep N3, and REM. Uncertain readings stay uncertain; nothing is rounded off.</p></div>
+      <div class="step"><span class="n">2</span><h3>Forecast</h3>
+        <p>A model of how sleep moves between stages, trained on 121 nights, combines those readings with how long you have been in your current stage and how far into the night you are. It predicts the next hour.</p></div>
+      <div class="step"><span class="n">3</span><h3>Decide</h3>
+        <p>Inside your wake-up window it asks: is waking now better than waiting for a lighter moment? It weighs grogginess against lost sleep and checks again 30 seconds later. At your latest time it always rings.</p></div>
+    </div>
+  </section>
+
+  <p class="fine" id="fine"></p>
+</main>
+
+<script>
+const DATA = {"grid":[0.0,0.01,0.02,0.03,0.04,0.05,0.06,0.07,0.08,0.1,0.12,0.15,0.2,0.25,0.3],"windows":79,"nights":30,"people":16,"inputs":{"stager":{"fixed":{"stage_pct":{"W":0.0,"N1":8.9,"N2":54.4,"N3":10.1,"REM":26.6},"stage_cost":3.797,"early_mean":0.0,"early_p90":0.0,"lost_mean":0.0,"no_loss_pct":100.0,"n":79},"bayes":{"0.0":{"stage_pct":{"W":0.0,"N1":44.3,"N2":30.4,"N3":7.6,"REM":17.7},"stage_cost":2.823,"early_mean":9.4,"early_p90":29.1,"lost_mean":9.4,"no_loss_pct":22.8,"n":79},"0.01":{"stage_pct":{"W":0.0,"N1":40.5,"N2":31.6,"N3":7.6,"REM":20.3},"stage_cost":2.924,"early_mean":7.6,"early_p90":22.3,"lost_mean":7.5,"no_loss_pct":25.3,"n":79},"0.02":{"stage_pct":{"W":0.0,"N1":40.5,"N2":29.1,"N3":8.9,"REM":21.5},"stage_cost":3.025,"early_mean":6.0,"early_p90":18.4,"lost_mean":6.0,"no_loss_pct":32.9,"n":79},"0.03":{"stage_pct":{"W":0.0,"N1":32.9,"N2":35.4,"N3":8.9,"REM":22.8},"stage_cost":3.19,"early_mean":4.4,"early_p90":15.6,"lost_mean":4.4,"no_loss_pct":35.4,"n":79},"0.04":{"stage_pct":{"W":0.0,"N1":31.6,"N2":36.7,"N3":8.9,"REM":22.8},"stage_cost":3.215,"early_mean":4.1,"early_p90":15.1,"lost_mean":4.1,"no_loss_pct":35.4,"n":79},"0.05":{"stage_pct":{"W":0.0,"N1":29.1,"N2":36.7,"N3":10.1,"REM":24.1},"stage_cost":3.367,"early_mean":2.3,"early_p90":7.0,"lost_mean":2.3,"no_loss_pct":41.8,"n":79},"0.06":{"stage_pct":{"W":0.0,"N1":26.6,"N2":39.2,"N3":10.1,"REM":24.1},"stage_cost":3.418,"early_mean":1.8,"early_p90":5.8,"lost_mean":1.8,"no_loss_pct":43.0,"n":79},"0.07":{"stage_pct":{"W":0.0,"N1":26.6,"N2":39.2,"N3":10.1,"REM":24.1},"stage_cost":3.418,"early_mean":1.7,"early_p90":5.8,"lost_mean":1.7,"no_loss_pct":45.6,"n":79},"0.08":{"stage_pct":{"W":0.0,"N1":26.6,"N2":39.2,"N3":10.1,"REM":24.1},"stage_cost":3.418,"early_mean":1.7,"early_p90":5.7,"lost_mean":1.7,"no_loss_pct":45.6,"n":79},"0.1":{"stage_pct":{"W":0.0,"N1":26.6,"N2":39.2,"N3":10.1,"REM":24.1},"stage_cost":3.418,"early_mean":1.3,"early_p90":4.2,"lost_mean":1.3,"no_loss_pct":53.2,"n":79},"0.12":{"stage_pct":{"W":0.0,"N1":26.6,"N2":39.2,"N3":10.1,"REM":24.1},"stage_cost":3.418,"early_mean":1.3,"early_p90":4.0,"lost_mean":1.3,"no_loss_pct":54.4,"n":79},"0.15":{"stage_pct":{"W":0.0,"N1":22.8,"N2":43.0,"N3":10.1,"REM":24.1},"stage_cost":3.494,"early_mean":1.0,"early_p90":4.0,"lost_mean":1.0,"no_loss_pct":63.3,"n":79},"0.2":{"stage_pct":{"W":0.0,"N1":22.8,"N2":43.0,"N3":10.1,"REM":24.1},"stage_cost":3.494,"early_mean":0.8,"early_p90":3.5,"lost_mean":0.8,"no_loss_pct":67.1,"n":79},"0.25":{"stage_pct":{"W":0.0,"N1":20.3,"N2":45.6,"N3":10.1,"REM":24.1},"stage_cost":3.544,"early_mean":0.6,"early_p90":2.6,"lost_mean":0.6,"no_loss_pct":68.4,"n":79},"0.3":{"stage_pct":{"W":0.0,"N1":17.7,"N2":48.1,"N3":10.1,"REM":24.1},"stage_cost":3.595,"early_mean":0.5,"early_p90":2.0,"lost_mean":0.5,"no_loss_pct":74.7,"n":79}}},"labels":{"fixed":{"stage_pct":{"W":0.0,"N1":8.9,"N2":54.4,"N3":10.1,"REM":26.6},"stage_cost":3.797,"early_mean":0.0,"early_p90":0.0,"lost_mean":0.0,"no_loss_pct":100.0,"n":79},"bayes":{"0.0":{"stage_pct":{"W":0.0,"N1":69.6,"N2":16.5,"N3":3.8,"REM":10.1},"stage_cost":1.975,"early_mean":14.5,"early_p90":30.0,"lost_mean":14.5,"no_loss_pct":13.9,"n":79},"0.01":{"stage_pct":{"W":0.0,"N1":65.8,"N2":19.0,"N3":3.8,"REM":11.4},"stage_cost":2.063,"early_mean":12.6,"early_p90":30.0,"lost_mean":12.6,"no_loss_pct":15.2,"n":79},"0.02":{"stage_pct":{"W":0.0,"N1":60.8,"N2":22.8,"N3":3.8,"REM":12.7},"stage_cost":2.177,"early_mean":11.0,"early_p90":27.6,"lost_mean":11.0,"no_loss_pct":16.5,"n":79},"0.03":{"stage_pct":{"W":0.0,"N1":55.7,"N2":26.6,"N3":3.8,"REM":13.9},"stage_cost":2.291,"early_mean":8.9,"early_p90":22.7,"lost_mean":8.9,"no_loss_pct":17.7,"n":79},"0.04":{"stage_pct":{"W":0.0,"N1":53.2,"N2":26.6,"N3":3.8,"REM":16.5},"stage_cost":2.367,"early_mean":7.8,"early_p90":21.1,"lost_mean":7.8,"no_loss_pct":22.8,"n":79},"0.05":{"stage_pct":{"W":0.0,"N1":49.4,"N2":27.8,"N3":5.1,"REM":17.7},"stage_cost":2.544,"early_mean":6.0,"early_p90":16.2,"lost_mean":6.0,"no_loss_pct":27.8,"n":79},"0.06":{"stage_pct":{"W":0.0,"N1":46.8,"N2":27.8,"N3":6.3,"REM":19.0},"stage_cost":2.696,"early_mean":5.1,"early_p90":14.1,"lost_mean":5.1,"no_loss_pct":32.9,"n":79},"0.07":{"stage_pct":{"W":0.0,"N1":46.8,"N2":27.8,"N3":6.3,"REM":19.0},"stage_cost":2.696,"early_mean":4.7,"early_p90":13.1,"lost_mean":4.7,"no_loss_pct":32.9,"n":79},"0.08":{"stage_pct":{"W":0.0,"N1":45.6,"N2":29.1,"N3":6.3,"REM":19.0},"stage_cost":2.722,"early_mean":4.0,"early_p90":11.6,"lost_mean":4.0,"no_loss_pct":34.2,"n":79},"0.1":{"stage_pct":{"W":0.0,"N1":40.5,"N2":32.9,"N3":6.3,"REM":20.3},"stage_cost":2.835,"early_mean":2.6,"early_p90":8.5,"lost_mean":2.6,"no_loss_pct":40.5,"n":79},"0.12":{"stage_pct":{"W":0.0,"N1":40.5,"N2":31.6,"N3":7.6,"REM":20.3},"stage_cost":2.924,"early_mean":2.3,"early_p90":7.0,"lost_mean":2.3,"no_loss_pct":41.8,"n":79},"0.15":{"stage_pct":{"W":0.0,"N1":36.7,"N2":35.4,"N3":7.6,"REM":20.3},"stage_cost":3.0,"early_mean":1.8,"early_p90":5.6,"lost_mean":1.8,"no_loss_pct":53.2,"n":79},"0.2":{"stage_pct":{"W":0.0,"N1":32.9,"N2":36.7,"N3":8.9,"REM":21.5},"stage_cost":3.177,"early_mean":1.3,"early_p90":4.5,"lost_mean":1.3,"no_loss_pct":57.0,"n":79},"0.25":{"stage_pct":{"W":0.0,"N1":32.9,"N2":35.4,"N3":8.9,"REM":22.8},"stage_cost":3.19,"early_mean":1.2,"early_p90":4.0,"lost_mean":1.2,"no_loss_pct":59.5,"n":79},"0.3":{"stage_pct":{"W":0.0,"N1":29.1,"N2":38.0,"N3":8.9,"REM":24.1},"stage_cost":3.278,"early_mean":1.0,"early_p90":3.5,"lost_mean":1.0,"no_loss_pct":63.3,"n":79}}}}};
+const STAGES = [
+  { k: "N1", name: "Lightest sleep (N1)" }, { k: "N2", name: "Light sleep (N2)" },
+  { k: "REM", name: "REM (dreaming)" }, { k: "N3", name: "Deep sleep (N3)" },
+];
+const ROWS = [
+  { key: "fixed", name: "Regular alarm", note: "rings at your latest time" },
+  { key: "bayes", name: "Our alarm", note: "" },
+];
+let input = "stager", idx = 5;
+
+const $ = id => document.getElementById(id);
+const pct = v => Math.round(v) + "%";
+const light = s => s.stage_pct.N1;
+const fmtMin = v => (v < 0.95 ? v.toFixed(1) : Math.round(v)) ;
+
+const KEYS = Object.keys(DATA.inputs.stager.bayes);   // same order as DATA.grid
+function ours() { return DATA.inputs[input].bayes[KEYS[idx]]; }
+
+function render() {
+  const sv = DATA.grid[idx], D = DATA.inputs[input], o = ours(), f = D.fixed;
+  $("sv-val").textContent = `${sv.toFixed(2)} per minute${sv === 0.05 ? " (default)" : ""}`;
+  $("equiv").innerHTML = sv === 0
+    ? "Lost sleep <b>doesn't count</b>: the alarm only cares about the stage you wake from."
+    : `Losing <b>${(1 / sv).toFixed(0)} minutes</b> of sleep counts as much as one wake-up from the lightest sleep (N1). A wake-up from deep sleep counts 10 times as much.`;
+
+  $("t-light").textContent = pct(light(o));
+  $("t-light-c").textContent = `Regular alarm: ${pct(light(f))}. That's ${(light(o) / light(f)).toFixed(1)}× as often.`;
+  $("t-deep").textContent = pct(o.stage_pct.N3);
+  $("t-deep-c").textContent = `Regular alarm: ${pct(f.stage_pct.N3)}.`;
+  $("t-lost").innerHTML = `${fmtMin(o.lost_mean)}<small> min</small>`;
+
+  $("lede").textContent = input === "stager"
+    ? `We tested only wake-up windows where people were asleep the whole time, so nobody was already awake. With a realistic headset our alarm woke them from the lightest sleep ${(light(o) / light(f)).toFixed(1)}× as often as a regular alarm, giving up ${fmtMin(o.lost_mean)} minutes of sleep on average. Drag the slider to trade gentler wake-ups against more sleep.`
+    : `With perfect sleep staging, the upside of a better headset, our alarm woke people from the lightest sleep ${(light(o) / light(f)).toFixed(1)}× as often as a regular alarm, for ${fmtMin(o.lost_mean)} minutes of sleep on average. Nobody was already awake in these windows.`;
+  $("rows-sub").textContent = `Share of ${D.fixed.n} wake-ups on ${DATA.nights} nights from ${DATA.people} people the model never trained on. Nobody was awake during these windows.`;
+
+  const rows = $("rows");
+  rows.innerHTML = "";
+  for (const row of ROWS) {
+    const s = row.key === "bayes" ? o : D[row.key];
+    const div = document.createElement("div");
+    div.className = "row" + (row.key === "bayes" ? " ours" : "");
+    const lost = s.lost_mean === 0 ? "no sleep given up" : `${fmtMin(s.lost_mean)} min of sleep given up`;
+    div.innerHTML = `<div class="row-head"><span class="name">${row.name}</span><span class="lost">${lost}</span></div>`;
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    for (const st of STAGES) {
+      const v = s.stage_pct[st.k];
+      const seg = document.createElement("span");
+      seg.style.flex = `0 0 calc(${v}% - 2px)`;
+      seg.style.background = `var(--s-${st.k})`;
+      seg.style.color = `var(--on-${st.k})`;
+      seg.textContent = v >= 9 ? pct(v) : "";
+      seg.setAttribute("aria-label", `${row.name}: ${st.name} ${pct(v)}`);
+      seg.addEventListener("mouseenter", e => showTip(seg, `${row.name}<br>${st.name}: ${v.toFixed(1)}%`));
+      seg.addEventListener("mouseleave", hideTip);
+      bar.append(seg);
+    }
+    div.append(bar);
+    rows.append(div);
+  }
+  drawChart();
+  $("fine").textContent = finePrint();
+}
+
+const legend = $("legend");
+legend.innerHTML = STAGES.map(s => `<span><i style="background:var(--s-${s.k})"></i>${s.name}</span>`).join("");
+
+// --- trade-off chart -------------------------------------------------------------------
+const tip = $("tip");
+function showTip(el, html) {
+  const box = $("chart").contains(el) ? $("chart") : el.closest(".card");
+  const r = el.getBoundingClientRect(), c = $("chart").getBoundingClientRect();
+  tip.innerHTML = html;
+  tip.hidden = false;
+  tip.style.left = (r.left + r.width / 2 - c.left) + "px";
+  tip.style.top = (r.top - c.top) + "px";
+}
+function hideTip() { tip.hidden = true; }
+
+function drawChart() {
+  const D = DATA.inputs[input];
+  const W = 720, H = 360, M = { t: 18, r: 24, b: 52, l: 72 };
+  const iw = W - M.l - M.r, ih = H - M.t - M.b;
+  const xMax = 20, yMin = 0, yMax = 80;
+  const x = v => M.l + (v / xMax) * iw;
+  const y = v => M.t + ih - ((v - yMin) / (yMax - yMin)) * ih;
+  const ns = "http://www.w3.org/2000/svg";
+  const el = (n, a, t) => { const e = document.createElementNS(ns, n); for (const k in a) e.setAttribute(k, a[k]); if (t != null) e.textContent = t; return e; };
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img",
+    "aria-label": "Trade-off between minutes of sleep given up and the share of gentle wake-ups" });
+
+  for (let v = yMin; v <= yMax; v += 20) {
+    svg.append(el("line", { x1: M.l, x2: W - M.r, y1: y(v), y2: y(v), stroke: "var(--line)", "stroke-width": 1 }));
+    svg.append(el("text", { x: M.l - 10, y: y(v) + 4, "text-anchor": "end", "font-size": 12, fill: "var(--muted)" }, v + "%"));
+  }
+  for (let v = 0; v <= xMax; v += 5) {
+    svg.append(el("text", { x: x(v), y: H - M.b + 20, "text-anchor": "middle", "font-size": 12, fill: "var(--muted)" }, v));
+  }
+  svg.append(el("text", { x: M.l + iw / 2, y: H - 10, "text-anchor": "middle", "font-size": 13, fill: "var(--ink-2)" }, "Minutes of sleep given up (average)"));
+  svg.append(el("text", { x: 12, y: M.t + ih / 2, "text-anchor": "middle", "font-size": 13, fill: "var(--ink-2)",
+    transform: `rotate(-90 12 ${M.t + ih / 2})` }, "Woken from the lightest sleep (N1)"));
+
+  const pts = DATA.grid.map((g, i) => { const s = D.bayes[KEYS[i]]; return { i, g, lx: s.lost_mean, ly: light(s) }; });
+  svg.append(el("path", { d: pts.map((p, j) => (j ? "L" : "M") + x(p.lx) + "," + y(p.ly)).join(" "),
+    fill: "none", stroke: "var(--accent)", "stroke-width": 2.5, "stroke-linejoin": "round" }));
+
+  const ref = (px, py, label, anchor, dx, dy) => {
+    const g = el("g", {});
+    g.append(el("circle", { cx: x(px), cy: y(py), r: 7, fill: "var(--ref)", stroke: "var(--card)", "stroke-width": 2 }));
+    g.append(el("text", { x: x(px) + dx, y: y(py) + dy, "text-anchor": anchor, "font-size": 13, fill: "var(--ink-2)" }, label));
+    svg.append(g);
+  };
+  ref(D.fixed.lost_mean, light(D.fixed), "Regular alarm", "start", 12, 18);
+
+  for (const p of pts) {
+    const on = p.i === idx;
+    const c = el("circle", { cx: x(p.lx), cy: y(p.ly), r: on ? 9 : 5,
+      fill: on ? "var(--accent-ink)" : "var(--accent)", stroke: "var(--card)", "stroke-width": 2, style: "cursor:pointer" });
+    const hit = el("circle", { cx: x(p.lx), cy: y(p.ly), r: 12, fill: "transparent", style: "cursor:pointer" });
+    const html = `Sleep cost ${p.g.toFixed(2)}/min<br>${pct(p.ly)} from N1 · ${fmtMin(p.lx)} min given up`;
+    hit.addEventListener("mouseenter", () => showTip(c, html));
+    hit.addEventListener("mouseleave", hideTip);
+    hit.addEventListener("click", () => { idx = p.i; $("sv").value = idx; render(); });
+    svg.append(c, hit);
+  }
+  const cur = pts[idx];
+  svg.append(el("text", { x: x(cur.lx) + 12, y: y(cur.ly) + 28, "font-size": 14, "font-weight": 700,
+    fill: "var(--ink)" }, "Our alarm"));
+
+  const box = $("chart");
+  box.querySelector("svg")?.remove();
+  box.prepend(svg);
+}
+
+function finePrint() {
+  const o = ours();
+  return "How these numbers were made: 32 nights from 16 people in the public Sleep-EDF dataset, none used to train the model. " +
+    `We tried latest wake-up times every 30 minutes from 4 to 7.5 hours after falling asleep, each with a 30-minute window before it, and kept only the ${DATA.windows} windows in which the person was asleep from start to finish. ` +
+    "That is roughly one window in three: the people in this dataset are mostly older and wake briefly many times a night. " +
+    "The windows were picked from what actually happened, identically for both alarms, and never shown to our model. " +
+    "Our alarm treats a brief awakening as no better than the lightest sleep, so it never holds out for one. " +
+    (input === "stager"
+      ? "The headset is simulated: it reads the expert-scored stages through realistic noise (77% of 30-second readings correct, with errors that come in runs, and 2% of readings missing). "
+      : "Perfect sleep staging means the alarm saw the expert-scored stage of every 30 seconds as it happened, which bounds what a better headset could do. ") +
+    "Stage at wake-up is the expert-scored stage; sleep given up counts the minutes actually asleep between the alarm and the latest time. " +
+    "Which stage people wake from is a proxy for how groggy they feel; we have not measured grogginess directly. ";
+}
+
+$("sv").addEventListener("input", e => { idx = +e.target.value; render(); });
+document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => {
+  input = b.dataset.input;
+  document.querySelectorAll(".seg button").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+  render();
+}));
+render();
+</script>
