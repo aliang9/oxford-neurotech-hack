@@ -14,6 +14,7 @@ BCICore ────────────────┴─> Router ─┬─
 calibrate.py / tasks.py check:  LSL "core8_eeg" ─> per-channel amplitude, drift, muscle ─> pass/fail
 decode.py:  HDF5 ─> zero-phase filters ─> epochs per task ─> band power ─> LDA + cross-validation
 receive.py: any LSL stream ─> per-channel mean/std every second (+ optional CSV)
+neurofeedback/: LSL "core8_eeg" (or CSV / simulator) ─> PO7/POz/PO8 alpha z-score ─> cumulative reward dashboard
 dance/:     LSL "core8_raw" (unfiltered) ─> block CSVs ─> window features ─> random forest ─> live moves
 ```
 
@@ -27,6 +28,7 @@ dance/:     LSL "core8_raw" (unfiltered) ─> block CSVs ─> window features �
 | `decode.py` | offline decoding of the recorded tasks, with chance level and a permutation test |
 | `receive.py` | standalone pylsl reader, e.g. for checking streams or saving them to CSV |
 | `dance/` | dance-move classifier: record, train, decode live with a dashboard (see below) |
+| `neurofeedback/` | eyes-closed posterior-alpha neurofeedback with a live reward dashboard (see below) |
 
 ## Setup
 
@@ -237,6 +239,116 @@ at least 1.5 s. This mode needs the dashboard, so `--no-gui` works only with
 **Without the headset:** `acquire.py --simulate`, then `dance.record --subject sim --block 1
 --reps 2 --skip-check` (twice, blocks 1 and 2), then `dance.train`. It should score near
 chance, which shows the whole chain runs.
+
+## Tandem: alpha neurofeedback (`neurofeedback/`)
+
+A dashboard that rewards sustained increases in posterior alpha (8–12 Hz) over a 60 s eyes-open
+resting baseline. The score reflects sustained modulation of one EEG feature. It is **not** a
+validated measure of meditation depth.
+
+```bash
+# Live: acquire.py streams core8_eeg, then
+.venv/bin/python acquire.py                      # terminal 1
+.venv/bin/python calibrate.py                    # terminal 2: get the electrodes green first
+.venv/bin/python -m neurofeedback --participant p01   # terminal 2
+# No headset
+.venv/bin/python -m neurofeedback --source sim --speed 5
+.venv/bin/python -m neurofeedback --source sim --ui both      # user view + debug view
+.venv/bin/python -m neurofeedback --source csv --csv data/dance/p01_b1.csv
+```
+
+There are two windows. The **user view** (default) is for the participant, styled as flat ink
+on paper with splashes of colour. It shows a breathing line-art meditator on a colour blob,
+grey at rest and turning yellow as alpha nears the threshold (blue while calibrating, coral
+for poor signal, mint when done). The figure's eyes are open during calibration and closed
+during the session, and it smiles more as alpha rises. Below it are the points, a status tag,
+one reward curve and one button. Since the participant's eyes are closed, the feedback is mainly sound:
+- a soft bell for every reward point, with notes wandering over a pentatonic scale like wind chimes
+- a deeper bell every 10 points
+- a quiet ambient pad that swells as alpha approaches the threshold
+- cues when calibration starts and ends
+
+Before starting, the participant picks a **timed** session (minutes, with a countdown; it
+ends by itself) or an **open-ended** one (it runs until **End session**). Both can be paused
+and resumed, and a pause stops the countdown. Poor-signal windows don't stop the clock; they
+just earn nothing. The reward curve shows the previous personal best for that session mode as
+a dashed target line. Passing it rings a bell, and a cue sounds when the session ends.
+Calibration is eyes open (gaze resting on the orb). The session starts by itself afterwards,
+in the chosen mode (`--no-auto-start` turns this off).
+
+**Session history.** Every completed session, whether ended by the timer, by **End session**
+or by closing the window, is appended to `data/neurofeedback_sessions.csv` (`--history`):
+participant (`--participant`), end time, mode (`timed`/`indefinite`), planned minutes,
+score, active duration (excluding pauses), clean duration, how it ended, whether it was a
+personal best, threshold and channels. Personal bests are per participant and per mode, read
+back from this file. The score is deliberately not normalised by duration, so longer
+sessions can score more.
+
+Keys: Space start/pause, M mute, F full screen. `--mute` starts silent.
+The sounds are synthesised in `neurofeedback/sounds.py`, so no audio files are needed. The
+**debug view** (`--ui debug`, or `--ui both` for the experimenter's screen) has the plots and
+controls described below.
+
+In the debug window: **Start baseline calibration** (60 s, eyes open, resting), choose
+Indefinite/Timed and the minutes (or pass `--minutes`), then **Start session**, **Pause** /
+**Resume** and **End session**. The reward plot shows the personal best as a dashed line.
+**Reset reward** works only between sessions. **Export CSV** saves the time series: every
+update with its state, validity, rejection reason, channels used, z, smoothed z, reward
+rate, cumulative reward, and per electrode the log alpha, z and baseline mean/std. The
+**Electrodes** checkboxes exclude an electrode by hand (and put it back) at any time. An
+electrode turns red while it is being rejected or has no baseline.
+
+| file | what it does |
+|---|---|
+| `neurofeedback/config.py` | channels, windows, band, baseline, smoothing, threshold and artifact limits |
+| `neurofeedback/sources.py` | live LSL, CSV replay and a simulator, all with `pull()` like `dance/stream.py` |
+| `neurofeedback/features.py` | channel selection, causal 1–40 Hz + notch filter, Welch alpha power, artifact checks |
+| `neurofeedback/baseline.py` | 60 s baseline: mean and std of log alpha, per electrode |
+| `neurofeedback/reward.py` | EMA smoothing and the cumulative reward |
+| `neurofeedback/engine.py` | ties these together; acquisition and processing threads |
+| `neurofeedback/app.py` | the debug dashboard (PyQtGraph) and the command line |
+| `neurofeedback/calm.py` | the participant's user view |
+| `neurofeedback/sounds.py` | synthesised chimes, cues and ambient pad (Qt multimedia) |
+
+**Pipeline.** Every 0.5 s it takes the last 4 s of each selected channel (filtered 1–40 Hz
+causally, plus a 50 Hz notch, `MAINS_HZ` in config) and computes Welch's PSD with 2 s segments.
+It integrates 8–12 Hz to get log10 alpha power per electrode. Each electrode has its own
+baseline, so `z_c = (log_alpha_c − baseline_mean_c) / baseline_std_c`, and the feature is the
+mean of `z_c` over the usable electrodes (clean in this window, ticked, and with a baseline).
+It is smoothed with a 3 s EMA (`--tau`). While recording, each clean update adds `max(0, z_smooth − threshold) · Δt` to
+the cumulative reward, i.e. `dR/dt = max(0, z − 2)` (threshold `--threshold`, default 2, also
+adjustable live in the debug view).
+The reward never decreases.
+
+**Channels** (`--channels PO7,Oz,PO8`). The Core-8 has no Oz, so Oz falls back to POz
+(`FALLBACK` in config). Any other missing channel is skipped with a warning. If none of the
+channels exist, the app stops with an error.
+
+**Poor signal.** An electrode is dropped from an update if, within the 4 s window, it has
+missing samples (NaN), std < 0.5 µV (flat), peak-to-peak > 150 µV (movement or electrode pop)
+or 20–40 Hz rms > 10 µV (muscle). The flat and muscle limits come from `quality.py`. A
+timestamp gap > 0.1 s (dropped samples) drops every electrode. Because each electrode is
+compared with its own baseline, the others carry on. Only when fewer than `MIN_CHANNELS`
+(default 1) usable electrodes remain is the update rejected: it earns no reward, the EMA
+holds and the state shows *poor signal* with the reason. Movement usually hits every
+electrode at once, so it still pauses the reward.
+
+**Baseline.** Each electrode's baseline uses only its own clean updates. An electrode with
+fewer than half of its updates clean gets no baseline and is left out until you recalibrate.
+Calibration fails only if no electrode has a baseline. A baseline is recorded for unticked
+electrodes too, so they can be ticked again later. Each std is floored at 0.05 log10 units,
+so near-zero variance can't blow up z.
+
+**Simulator.** While a session runs, the app raises the simulated alpha 3× over about 3 s,
+standing in for the eyes closing after the eyes-open baseline. The Core-8 montage with 1/f-like noise, a DC offset and 50 Hz, plus 10 Hz alpha
+(strongest at PO7/POz/PO8) whose amplitude rises and falls over 90 s. Every 30–50 s it adds a
+1.5 s movement or muscle burst. `--no-artifacts` turns these off.
+
+**CSV replay** needs a header row. A `time`/`timestamp`/`lsl_timestamp` column, if present,
+gives the timestamps and the sample rate, and `marker` columns are ignored. This reads both
+`dance/` block CSVs and `receive.py --csv` output. `--speed` sets the replay speed.
+The repo's existing CSVs were recorded while dancing, or have
+high-amplitude posterior channels, so nearly all their updates are (correctly) rejected.
 
 ## Calibration: getting every electrode recording properly
 

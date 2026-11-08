@@ -5,4 +5,5 @@ numpy
 scipy
 scikit-learn
 joblib        # dance/: saving and loading models
-pyqtgraph     # dance/live.py dashboard
+pyqtgraph     # dance/live.py and neurofeedback/ dashboards
+PySide6       # Qt for the dashboards (also pulled in by gpype[all])
