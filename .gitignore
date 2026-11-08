@@ -1,3 +1,6 @@
 .venv/
 __pycache__/
 .DS_Store
+
+# recordings, session history and other data
+data/

@@ -15,6 +15,8 @@ calibrate.py / tasks.py check:  LSL "core8_eeg" ─> per-channel amplitude, drif
 decode.py:  HDF5 ─> zero-phase filters ─> epochs per task ─> band power ─> LDA + cross-validation
 receive.py: any LSL stream ─> per-channel mean/std every second (+ optional CSV)
 neurofeedback/: LSL "core8_eeg" (or CSV / simulator) ─> PO7/POz/PO8 alpha z-score ─> cumulative reward dashboard
+sleep/:     Sleep-EDF hypnograms ─> HMM / duration-aware HSMM ─> stage forecasts 5–30 min ahead (smart-alarm groundwork)
+smartalarm/: stage probabilities (replay / simulated stager; EEG later) ─> online HSMM ─> wake-or-wait policy ─> alarm app
 dance/:     LSL "core8_raw" (unfiltered) ─> block CSVs ─> window features ─> random forest ─> live moves
 ```
 
@@ -29,6 +31,8 @@ dance/:     LSL "core8_raw" (unfiltered) ─> block CSVs ─> window features �
 | `receive.py` | standalone pylsl reader, e.g. for checking streams or saving them to CSV |
 | `dance/` | dance-move classifier: record, train, decode live with a dashboard (see below) |
 | `neurofeedback/` | eyes-closed posterior-alpha neurofeedback with a live reward dashboard (see below) |
+| `sleep/` | probabilistic sleep-stage forecasting (HMM and HSMM) for a future smart alarm (see below) |
+| `smartalarm/` | Bayesian smart alarm: online HSMM tracking, optimal-stopping wake-up, replay app (see below) |
 
 ## Setup
 
@@ -349,6 +353,381 @@ gives the timestamps and the sample rate, and `marker` columns are ignored. This
 `dance/` block CSVs and `receive.py --csv` output. `--speed` sets the replay speed.
 The repo's existing CSVs were recorded while dancing, or have
 high-amplitude posterior channels, so nearly all their updates are (correctly) rejected.
+
+## Sleep-stage forecasting (`sleep/`)
+
+This models how sleep stages evolve so that a future smart alarm can forecast them. It is
+trained on the expert hypnograms of [Sleep-EDF Expanded](https://physionet.org/content/sleep-edfx/1.0.0/)
+(sleep-cassette: 78 healthy, unmedicated subjects aged 25–101, 153 nights). It does no EEG
+sleep staging and has no alarm yet. Both models take *uncertain* current stages and history
+(probability vectors), so an EEG stager can be plugged in later.
+
+```bash
+.venv/bin/python -m sleep.data        # download 153 hypnograms (~1 MB, no PSG) + preprocess
+.venv/bin/python -m sleep.train       # fit, ~1 s -> models/sleep/models.joblib, models_all.joblib
+.venv/bin/python -m sleep.selftest    # correctness checks
+.venv/bin/python -m sleep.evaluate    # held-out subjects -> table + models/sleep/metrics.json
+.venv/bin/python -m sleep.evaluate --folds 5   # 5-fold CV grouped by subject (~1 min)
+.venv/bin/python -m sleep.dashboard   # step through held-out nights
+```
+
+```python
+from sleep.predict import predict_future
+p = predict_future(stage_probabilities=[0.05, 0.05, 0.8, 0.05, 0.05],  # W N1 N2 N3 REM, now
+                   stage_history=[2] * 40,          # past epochs, oldest first: labels or (T, 5) probs
+                   time_since_sleep_onset=180,      # minutes; None = not asleep yet
+                   horizons_minutes=[5, 10, 30])    # any multiple of 0.5 min
+# p.shape == (3, 5); model="hsmm_time" by default (also "hsmm", "hmm_time", "hmm", "persistence")
+```
+
+| file | what it does |
+|---|---|
+| `sleep/config.py` | stages, label map, trimming, time and duration bins, smoothing strengths, horizons |
+| `sleep/data.py` | download from PhysioNet, MNE parsing into 30 s epochs, trimming → `data/sleep-edf/epochs.csv` |
+| `sleep/models.py` | counting, HMM, HSMM, persistence, causal filter, forecasting |
+| `sleep/train.py` | subject split, fitting, serialisation |
+| `sleep/predict.py` | `predict_future(...)`, the interface for the alarm |
+| `sleep/evaluate.py` | metrics by horizon with subject-bootstrap CIs; optional grouped CV |
+| `sleep/dashboard.py` | the PyQtGraph dashboard (`--screenshot out.png` renders it headless) |
+| `sleep/selftest.py` | checks the maths (see below) |
+
+**Data.** Each `*-Hypnogram.edf` is read with `mne.read_annotations` and cut into 30 s
+epochs. Stages map to W, N1, N2, N3 (R&K 3 + 4) and REM. "Sleep stage ?", "Movement time"
+and anything without an annotation are *unscored* (−1). Unscored epochs stay in place as
+gaps, so no transition is ever counted across one, and the filter treats them as missing
+evidence. **Trimming rule:** the cassette recordings run ~20 h, mostly wake. Each one is
+cut to 30 min before the first sleep epoch (first scored non-W) through 30 min after the
+last one. Recording, subject and night IDs are kept, and the subject split uses them.
+
+**HMM.** `A[i, j]` is the transition counts between consecutive scored epochs, with
+Laplace (Dirichlet α = 1) smoothing. A forecast is `b Aᵏ` for a belief `b`.
+
+**HSMM.** The hidden state is (stage, minutes in that stage so far), counted in epochs and
+capped at 60 min, which means "60 min or more". Each 30 s step, stage `s` ends with hazard
+`h_s(d)` and moves to `s' ~ P(s' | s, d)`, or else carries on with `d + 1`. This gives
+stage-specific duration distributions and transitions that depend on elapsed time:
+- The hazard is the number of exits over the number at risk, in duration bins that widen
+  with `d`. It is shrunk toward the stage's mean hazard (`KAPPA_DUR` pseudo-counts), so
+  sparse bins fall back to the HMM. Right-censored runs are handled by construction.
+- Runs whose start wasn't observed (the first run of a night, or after a gap) are left out
+  of the duration statistics.
+- Where a stage goes next depends on how long it lasted: 0.5–1 min (arousal-like),
+  1.5–5 min, or longer.
+- From uncertain history, the filter infers the current elapsed time. An unknown start
+  gets the renewal prior P(d) ∝ survival.
+
+**Time of night.** The `_time` variants index every parameter by time since sleep onset:
+not asleep yet, then 0–2, 2–4, 4–6 and 6+ h. Each time bin is shrunk toward the
+stationary estimate (`KAPPA_TIME`). During a forecast, the bin moves forward with the
+forecast clock.
+
+**Evaluation.** 62 training and 16 test subjects; both nights of a subject stay on the same
+side.
+- An origin is every scored epoch from sleep onset onwards. A target is the stage h min
+  later, if scored.
+- The state at the origin comes from a causal filter over labels up to and including the
+  origin, so the HSMM's elapsed duration is computed causally. Sleep onset is known at the
+  origin by definition. `selftest` checks that changing every label after the origin
+  leaves each forecast unchanged.
+- The persistence baseline puts P(stage unchanged after h), from training, on the current
+  stage and spreads the rest evenly, so its log loss is finite. It has the same argmax as
+  "nothing changes".
+
+Held-out test subjects (16 subjects, 32 nights). Log loss is in nats; Δ is the log loss
+minus the stationary HMM's, with a 95% subject-bootstrap interval; Brier is the 5-class
+sum; acc is the accuracy of the most probable stage; ECE is the top-label calibration
+error:
+
+| horizon | model | log loss | Δ vs HMM [95% CI] | Brier | acc | ECE |
+|---|---|---|---|---|---|---|
+| 5 min | persistence | 1.013 | +0.029 [+0.007, +0.052] | 0.480 | 0.706 | 0.009 |
+| | HMM | 0.984 | — | 0.485 | 0.697 | 0.115 |
+| | HMM, time | 0.975 | −0.009 [−0.020, +0.000] | 0.483 | 0.697 | 0.119 |
+| | HSMM | 0.846 | −0.138 [−0.156, −0.119] | 0.417 | 0.713 | 0.038 |
+| | **HSMM, time** | **0.836** | **−0.148 [−0.167, −0.129]** | **0.414** | **0.718** | 0.037 |
+| 10 min | persistence | 1.198 | −0.003 | 0.583 | 0.617 | 0.021 |
+| | HMM | 1.201 | — | 0.601 | 0.637 | 0.180 |
+| | HMM, time | 1.182 | −0.019 | 0.597 | 0.632 | 0.175 |
+| | HSMM | 1.023 | −0.178 | 0.508 | 0.638 | 0.046 |
+| | **HSMM, time** | **1.003** | **−0.198 [−0.226, −0.171]** | **0.501** | **0.642** | 0.045 |
+| 15 min | persistence | 1.310 | −0.004 | 0.646 | 0.552 | 0.022 |
+| | HMM | 1.313 | — | 0.664 | 0.556 | 0.204 |
+| | HMM, time | 1.286 | −0.027 | 0.655 | 0.560 | 0.151 |
+| | HSMM | 1.120 | −0.193 | 0.555 | 0.585 | 0.038 |
+| | **HSMM, time** | **1.093** | **−0.220 [−0.255, −0.187]** | **0.547** | **0.591** | 0.041 |
+| 30 min | persistence | 1.476 | +0.061 | 0.735 | 0.428 | 0.019 |
+| | HMM | 1.415 | — | 0.720 | 0.539 | 0.184 |
+| | HMM, time | 1.374 | −0.041 | 0.704 | 0.435 | 0.038 |
+| | HSMM | 1.250 | −0.165 | 0.620 | 0.539 | 0.042 |
+| | **HSMM, time** | **1.210** | **−0.205 [−0.251, −0.164]** | **0.607** | **0.545** | 0.040 |
+
+5-fold CV grouped by subject (all 78 subjects; `--folds 5`), log loss and, in brackets,
+the difference from the stationary HMM:
+
+| model | 5 min | 10 min | 15 min | 30 min |
+|---|---|---|---|---|
+| persistence | 1.030 (+0.029) | 1.228 (+0.005) | 1.336 (+0.001) | 1.492 (+0.059) |
+| HMM | 1.001 | 1.223 | 1.334 | 1.432 |
+| HMM, time | 0.996 (−0.005) | 1.214 (−0.009) | 1.320 (−0.014) | 1.408 (−0.024) |
+| HSMM | 0.869 (−0.132) | 1.059 (−0.163) | 1.161 (−0.174) | 1.286 (−0.146) |
+| **HSMM, time** | **0.859 (−0.142)** | **1.042 (−0.181)** | **1.137 (−0.197)** | **1.253 (−0.179)** |
+
+The time-dependent HSMM's improvement over the HMM has a 95% subject-bootstrap interval
+that excludes zero at every horizon (e.g. [−0.154, −0.131] at 5 min). Its ECE is
+0.02–0.04.
+
+What this shows:
+- **Duration dependence matters most.** Stage durations here are very far from geometric.
+  The median N2 bout is 2.5 min and the mean 5.6 min. Most N1 and N3 runs last one or two
+  epochs, while REM bouts are long.
+- **The HMM is poorly calibrated.** With a single exit rate per stage, it is overconfident
+  that a stage which has just started will continue, and underconfident that a settled one
+  will (ECE 0.12–0.20 against ~0.04).
+- **Time of night adds a smaller, consistent gain**, largest at long horizons (−0.04 nats
+  at 30 min).
+- **Accuracy alone undersells the models**, because "stays the same" is a strong
+  argmax. For the alarm, the calibrated probabilities are what count.
+
+**Self-test** (`sleep.selftest`):
+- the HMM forecast equals `b Aᵏ` from `numpy.linalg.matrix_power`;
+- an HSMM built from the HMM (geometric hazards) reproduces the HMM's forecasts exactly,
+  after filtering a soft history with missing epochs and time bins (this checks the HSMM
+  code against an independent implementation);
+- no leakage from labels after the origin;
+- the filter recovers the true elapsed duration;
+- `predict_future`'s output shape and normalisation.
+
+**Dashboard.**
+- The night's hypnogram, with the forecast origin and its 30 min window. Click it, use the
+  slider or ←/→ (Shift: 5 min) to move the origin, or Space to play.
+- The next 30 min of stage probabilities from the HMM and from the HSMM, stacked, with the
+  actual stages as a strip underneath. Hover to read the values.
+- The normalised entropy of both forecasts.
+- The held-out metrics by horizon, for all five models, with bootstrap CIs.
+- A reliability diagram.
+- A switch between the time-dependent and the stationary pair.
+
+![sleep dashboard](figures/sleep_dashboard.png)
+
+**Not done yet / caveats.**
+- No EEG staging and no alarm policy.
+- Stage probabilities are used as likelihoods, which assumes a flat classifier prior.
+  Divide by the stager's class prior first if it has a strong one.
+- For an origin before sleep onset, the whole forecast uses the "not asleep yet" bin
+  (approximate).
+- The evaluation window ends 30 min after the last sleep epoch, which is a dataset choice
+  that uses the future. It limits which targets exist, never what the models see.
+- The population is older than a typical alarm user: on average 34% of the trimmed time is
+  wake.
+- Subject age/sex (SC-subjects.xls) is not used.
+
+## Smart alarm (`smartalarm/`)
+
+A Bayesian smart alarm built on the `sleep/` HSMM. It tracks sleep stages from a stream of
+stage probabilities (one per 30 s epoch), forecasts the next hour, and decides *wake now or
+keep sleeping* inside a window you set. For now its input is replayed held-out Sleep-EDF
+nights, either through a simulated EEG stager or as perfect labels. Live EEG plugs in later
+through `PushSource`.
+
+```bash
+.venv/bin/python -m smartalarm                       # replay app (first held-out night)
+.venv/bin/python -m smartalarm --night SC4022 --speed 900 --input labels
+.venv/bin/python -m smartalarm.selftest              # inference and decision checks
+.venv/bin/python -m smartalarm.evaluate              # fixed vs reactive vs Bayesian (~90 s)
+.venv/bin/python -m smartalarm.evaluate --windows asleep --quick   # only windows spent asleep
+```
+
+![smart alarm](figures/smart_alarm.png)
+
+**The app.**
+- **Phone, on the left:**
+  - the replay clock and the countdown to the latest wake-up time;
+  - live stage probabilities, with a "No signal" marker for missing epochs;
+  - the recommendation, with a one-line reason;
+  - the earliest/latest time editors;
+  - Start/Pause and Reset.
+- **Replay lab, on the right:**
+  - controls for the night, input (simulated stager or perfect labels), policy, speed (real
+    time to 3000×) and *Jump to 30 min before window*. Clicking the hypnogram also jumps;
+    the filter is rebuilt causally from the start of the night, and decisions are re-made
+    along the way;
+  - a row of **cost settings**: the cost of waking from each stage and the cost per minute of
+    sleep given up, with a Defaults button. A change rebuilds the session with the new
+    costs and catches up causally to the same moment, so you can watch the decision move.
+    The footer's comparison of the three alarms uses the same costs;
+  - three charts:
+    - **The night so far:** solid shading is the model's posterior per stage. Paler shading
+      in a dashed box is the forecast. A dashed ink line shows the true stages so far, and a
+      dotted line the true future, which the model never sees.
+    - **The next 60 minutes:** the stacked forecast, with the true stages as a strip
+      underneath.
+    - **The cost of waking:** the expected cost of an alarm fixed at each time in the
+      window, the cost of waking now (dot), and the policy's expected cost of sleeping on
+      (dashed).
+- **After the alarm:** the footer shows the true stage at the alarm, and what the fixed and
+  reactive alarms would have done on the same night with the same stager noise.
+- **Keys:** Space start/pause, R reset, J jump.
+
+| file | what it does |
+|---|---|
+| `smartalarm/config.py` | stage costs, value of sleep, reactive rule, onset detection, simulated stager, replay clock |
+| `smartalarm/sources.py` | `ReplaySource` (held-out night, simulated stager or labels) and `PushSource` (live stager: `push(probs)` every 30 s) |
+| `smartalarm/inference.py` | `OnlineHSMM`: causal filter over (stage, elapsed duration), onset estimate, forecasts |
+| `smartalarm/policy.py` | Bellman wake-or-wait policy, reactive and fixed baselines, explanations |
+| `smartalarm/session.py` | source → filter → policy → alarm, the model-independent deadline, JSONL logs |
+| `smartalarm/evaluate.py` | policy comparison and sensitivity analysis on held-out nights |
+| `smartalarm/app.py` | the PySide6/PyQtGraph app (`--screenshot out.png --at 06:10` renders it headless) |
+| `smartalarm/selftest.py` | checks (below) |
+
+**Inference.**
+- **Evidence:** each observation is a probability vector over W/N1/N2/N3/REM, or None
+  for a missing epoch. It's divided by the stager's training class prior (`class_prior` on
+  the source) to make a likelihood, floored at 0.1% per stage, and never collapsed to one
+  label.
+- **Update:** the HSMM predicts one step, using the time-of-night bin from the online
+  sleep-onset estimate, then multiplies by that likelihood.
+- **Gaps:** missing epochs and gaps just predict without an update.
+- **Sleep onset:** the first of 6 epochs in a row with P(asleep) > 0.5. Tracking is
+  assumed to start at bedtime, so the first epoch's prior is 90% awake.
+
+**Policy.**
+- **Cost of waking** at epoch u in stage s: `c(s) + 0.05 × minutes before the latest time`.
+  The defaults are `c = W 1, N1 1, N2 3, REM 4, N3 10`. A brief awakening costs the same as
+  N1 (see below), and REM is deliberately not treated as ideal. Both are in `config.py` and are heuristic proxies, not validated measures of sleep
+  inertia.
+- **Recursion:** one backward pass on the 30 s grid over the HSMM's hidden state computes
+  the continuation value `C_u(s, d)`, using the model's own duration-dependent
+  transitions; inside the window, `V_u = min(stop_u, C_u)`. Each epoch, the alarm fires
+  when `E_posterior[stop] ≤ E_posterior[C]`.
+- **Approximation:** this is QMDP. It assumes later decisions will see the stage, so it
+  slightly overvalues waiting.
+- **Cost:** the tables depend only on time, the settings and the onset estimate, so one
+  pass per night is enough, and each decision is two dot products.
+- **Deadline:** checked on the epoch counter before any model code runs, and model calls
+  are wrapped. A model exception or a stream of missing epochs cannot stop the alarm at
+  the latest time (tested).
+- **Baselines:** *Reactive* wakes at the first epoch in the window with P(W or N1) ≥ 0.5.
+  *Fixed* wakes at the latest time.
+
+**Connecting a live EEG stager.** Create `PushSource(class_prior=<the stager's training
+stage frequencies>)` and call `start()`. The stager thread calls `push(probs)` once per
+30 s epoch. Give it to `Session` in place of `ReplaySource` and call `advance()` from a
+timer. Epochs nobody pushed become missing observations, so the clock and the deadline keep
+running if the stager stalls. For a real alarm, also set an OS-level alarm at the latest
+time as a backstop. The app's GUI is replay-only for now.
+
+**Simulated stager.**
+- Log-likelihoods are centred on the true stage, plus typical confusions (W↔N1, N2↔N3,
+  REM↔N1).
+- The noise is AR(1) (σ 1.5, ρ 0.8), so errors come in runs as they do with a real
+  stager.
+- 2% of epochs are dropped.
+- The result is 77% epoch accuracy at 78% mean confidence, roughly what a
+  single-channel stager achieves.
+
+**Logs.** `data/alarm_sessions/<time>_<night>.jsonl` holds the settings, then every epoch
+(the observation, posterior, onset estimate, the wake-now and keep-sleeping costs, and the
+decision), then the alarm and its outcome.
+
+**Results** (`smartalarm.evaluate`):
+- **Setup:** 32 held-out nights (16 test subjects), each with deadlines 6, 6.5, 7 and 7.5 h
+  after sleep onset and a 30 min window.
+- **Scoring:** the cost uses the true stage at the alarm, with the default costs (W and N1
+  1, N2 3, REM 4, N3 10, and 0.05 per minute of sleep). The 95% interval bootstraps
+  subjects.
+- **Columns:** "early" is minutes before the deadline; "lost" is minutes of real sleep
+  given up.
+
+| input | policy | cost | vs fixed [95% CI] | early | lost | woke from W / N1 / N2 / N3 / REM (%) |
+|---|---|---|---|---|---|---|
+| simulated stager | fixed | 2.88 | — | 0 | 0 | 19 / 13 / 41 / 4 / 23 |
+| | reactive | 3.05 | +0.18 [−0.09, +0.43] | 21.9 | 16.9 | 35 / 30 / 15 / 1 / 20 |
+| | **Bayesian** | **2.55** | **−0.33 [−0.50, −0.17]** | 4.4 | 3.7 | 14 / 40 / 25 / 3 / 18 |
+| perfect labels | fixed | 2.88 | — | 0 | 0 | 19 / 13 / 41 / 4 / 23 |
+| | reactive | 2.30 | −0.58 [−0.90, −0.33] | 21.6 | 16.5 | 43 / 49 / 5 / 1 / 2 |
+| | **Bayesian** | **1.99** | **−0.89 [−1.27, −0.60]** | 8.7 | 7.6 | 11 / 69 / 11 / 1 / 9 |
+
+- **Bayesian vs fixed:** with the noisy stager, the Bayesian alarm wakes people from W or
+  N1 54% of the time against 32% for fixed, giving up about 4 min of sleep. With perfect
+  stages the gain is nearly three times as large.
+- **Reactive alarm:** it fires about 20 min early on brief light-sleep or wake readings and
+  gives up about 17 min of real sleep.
+
+**Why W costs the same as N1.** W used to cost 0. The policy then treated a brief awakening
+as better than N1 and sometimes passed up N1 to wait for one. On real nights that's
+reasonable, but where no awakening comes it backfires: in the asleep-only windows below,
+it passed up a real N1 moment in 47 of 79 windows. Even with sleep worth nothing it then did
+worse than the reactive alarm. Both are easy moments to wake, so they now cost the same.
+
+**Sensitivity** (simulated stager; realized cost for fixed / reactive / Bayesian; every
+row except the two sleep-value rows uses 0.05 per minute):
+
+| setting | fixed | reactive | Bayesian |
+|---|---|---|---|
+| N3 cost 5 | 2.67 | 3.01 | 2.31 |
+| N3 cost 20 | 3.29 | 3.13 | 2.57 |
+| REM cost 1 | 2.19 | 2.46 | 2.05 |
+| REM cost 8 | 3.80 | 3.84 | 2.92 |
+| sleep value 0.03/min | 2.88 | 2.62 | 2.21 (7.7 min early) |
+| sleep value 0.3/min | 2.88 | 8.52 | 2.79 (0.4 min early) |
+| window 15 min | 2.88 | **2.46** | 2.56 |
+| window 60 min | 2.88 | 4.27 | 2.55 |
+
+- **Where it wins:** the Bayesian alarm has the lowest cost in every setting but one.
+- **The exception:** with a 15 min window, the reactive alarm can lose at most 7.5 min of
+  sleep, and it does slightly better.
+- **The value of sleep:** cheaper sleep makes the Bayesian alarm wake earlier. The default
+  of 0.05 per minute (halved from 0.1) favours lighter stages a bit more.
+
+**Only windows spent asleep** (`--windows asleep`). In the table above, about 1 wake-up in
+5 is from W, because these mostly older sleepers wake briefly many times a night and are
+sometimes up for the day. Moving the window earlier doesn't fix that: 13–30% of window time
+is wake from 3 to 8 h after onset.
+- **Selection:** deadlines run every 30 min from 4 to 7.5 h after onset, and only windows
+  in which the person was asleep from start to finish are kept: 79 windows on 30 nights
+  from 16 people. Nobody can be woken from wake.
+- **Fairness:** the windows are picked from the true stages, the same for every policy,
+  and never shown to the model.
+
+| input | policy | cost | vs fixed [95% CI] | lost | woke from N1 / N2 / N3 / REM (%) |
+|---|---|---|---|---|---|
+| simulated stager | fixed | 3.80 | — | 0 | 9 / 54 / 10 / 27 |
+| | reactive | 3.57 | −0.23 [−0.58, +0.08] | 15.9 | 41 / 32 / 5 / 23 |
+| | **Bayesian** | **3.48** | **−0.31 [−0.57, −0.08]** | 2.3 | 29 / 37 / 10 / 24 |
+| perfect labels | fixed | 3.80 | — | 0 | 9 / 54 / 10 / 27 |
+| | reactive | 2.84 | −0.95 [−1.33, −0.64] | 15.1 | 72 / 13 / 6 / 9 |
+| | **Bayesian** | **2.85** | −0.95 [−1.35, −0.59] | 6.0 | 49 / 28 / 5 / 18 |
+
+- **With perfect staging:** the Bayesian and reactive alarms tie on cost, but the Bayesian
+  alarm gives up 6 min of sleep instead of 15.
+- **With sleep worth nothing and perfect staging:** the Bayesian alarm is ahead on stage
+  cost (1.98 vs 2.09).
+- **With the noisy stager:** the reactive alarm is a hair ahead on stage cost (2.77 vs
+  2.82, within noise). The QMDP approximation assumes future stages will be seen clearly,
+  so with noisy readings it slightly overvalues waiting.
+
+The replay app opens each night on the latest such window (`default_latest` in
+`smartalarm/app.py`).
+
+**Self-test** (`smartalarm.selftest`):
+- With visible stages, the Bellman value equals the Monte Carlo cost of following the
+  policy on HSMM-sampled nights (1.853 vs 1.843).
+- The policy never expects worse than the deadline alarm.
+- A stager output equal to its prior carries no evidence.
+- The deadline fires with a failing model, and with only missing epochs.
+- No decision depends on later observations.
+- `seek()` reproduces an uninterrupted run.
+
+**Not done / caveats.**
+- No live EEG and no trained stager.
+- The stage costs and the value of sleep are made up, and nothing here measures
+  post-awakening performance.
+- Results with real stager output will differ from the simulation.
+- The replay clock starts each recording at 22:30, because the hypnograms carry no time of
+  day.
+- Online onset detection is more than 10 min off on about a third of nights. It only
+  affects the coarse time-of-night bins.
+- The QMDP approximation assumes the stage will be known at later decisions.
 
 ## Calibration: getting every electrode recording properly
 
