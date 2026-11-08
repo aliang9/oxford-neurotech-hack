@@ -5,6 +5,8 @@ should stay fixed once you have recorded data with them. Never reuse a
 retired code: old recordings still contain it.
 """
 
+import os
+
 # marker code: (name, cue text shown on screen)
 # Retired codes: blocks recorded before still contain them, and those
 # trials are skipped. 11 step_touch (confused with spin), 12 rock_step
@@ -36,7 +38,21 @@ STEP = int(round(STEP_S * FS))     # 62 samples
 ONSET_SKIP_S = 0.5                 # ignore the reaction time after each cue
 MIN_PURITY = 1.0                  # training window: >= this fraction must be one move
 
-# Online decoding
-SMOOTH_ALPHA = 0.4   # weight of the newest probabilities in the moving average
-THRESHOLD = 0.5      # smoothed probability needed to switch move
-MIN_DUR_S = 0.75     # a new move must win for this long before we switch
+# Online decoding. Winner takes all: the top move of each 0.25 s step is shown
+# at once. For a steadier display, try SMOOTH_ALPHA 0.4, THRESHOLD 0.5, MIN_DUR_S 0.75.
+SMOOTH_ALPHA = 1.0   # weight of the newest probabilities in the moving average (1 = none)
+THRESHOLD = 0.0      # smoothed probability needed to switch move
+MIN_DUR_S = 0.0      # a new move must win for this long before we switch
+
+# Avatar shown on the dashboard for each move (in figures/): an animated GIF or a still image
+FIGURES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "figures")
+MOVE_GIFS = {
+    "spin": "2_spin_1.gif",
+    "arm_pumps": "4_arm_pumps_1.gif",
+    "bounce": "5_small_hops_1.gif",
+    "rest": "rest.png",
+    "robot": "7_robot_1.gif",
+    "floss": "6_floss_1.gif",
+    "head_bob": "8_head_bob_1.gif",
+    "step_touch": "1_step_touch_1.gif",
+}

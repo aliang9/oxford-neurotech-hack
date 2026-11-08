@@ -374,7 +374,7 @@ def summary(path, expected=None):
     print(f"{len(starts)} complete segments" + (f" of {expected} cued" if expected else "") + ": "
           + ", ".join(f"{k} {v}" for k, v in counts.items() if v))
     if pairs:
-        n = len(cfg.MOVES)
+        n = len(set(starts))  # the moves this block used
         print(f"{len(pairs)} of {n * (n - 1)} possible move-to-move transitions covered")
     if not starts:
         print("No segments found: are markers reaching acquire.py (same --port)?")

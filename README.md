@@ -163,7 +163,9 @@ covered.
 **Changing moves.** Codes are fixed once recorded. Step-touch (11), rock step (12) and
 shoulder shimmy (14) were retired, as they were confused with spin and with the arm moves:
 blocks recorded with them still load, and their trials are skipped. Never reuse a retired
-code.
+code. To leave a move out without retiring it, pass the moves to keep:
+`dance.record --moves rest floss robot bounce spin head_bob` records only those (seq3), and
+`dance.train --moves ...` trains on only those, e.g. to drop arm pumps from seq2 blocks.
 
 **Features** (per 1.5 s window, every 0.25 s): only each channel's mean is removed, nothing
 else is filtered. Per channel: log RMS, log RMS of the first difference, and log band power at
@@ -184,9 +186,10 @@ saved model remembers this, and `dance.live` drops the same features, so nothing
 train and test. It prints accuracy and macro-F1 for the random forest and the majority
 baseline, the confusion matrix, a per-class report and the top features.
 
-**Online, `--mode continuous`.** It runs the classifier every 0.25 s on the last 1.5 s and averages the probabilities
-(`SMOOTH_ALPHA`). The decoded move changes only after another move has been ≥ `THRESHOLD`
-for `MIN_DUR_S`. Each change is printed with its LSL timestamp. In replay it also scores the
+**Online, `--mode continuous`.** It runs the classifier every 0.25 s on the last 1.5 s. By
+default the decoder is winner-takes-all: the top move of every step is shown at once. For a
+steadier display, average the probabilities (`SMOOTH_ALPHA` < 1) and switch only after another
+move has been ≥ `THRESHOLD` for `MIN_DUR_S`. Each change is printed with its LSL timestamp. In replay it also scores the
 decoded sequence against the cues:
 - *step accuracy*: decoded == cued, every 0.25 s
 - *segments detected*: the cued move was decoded at some point before the next cue
@@ -196,14 +199,23 @@ decoded sequence against the cues:
 
 `--no-gui` prints only the transitions, and `--speed 0` replays as fast as possible.
 
-`SMOOTH_ALPHA`, `THRESHOLD` and `MIN_DUR_S` trade latency for stability. On the two discrete
-blocks (train on one, replay the other) the defaults gave about 2.7 s median latency and
-0.58 sequence accuracy. Switching on every step (`MIN_DUR_S = 0`, `THRESHOLD = 0.35`) cut
-latency to about 1.6 s and nearly doubled step accuracy, but the extra false switches made sequence
-accuracy negative. So with the current defaults, hold a move for at least ~3 s when dancing
-live. Retune these on held-out sequence blocks. The dashboard shows the raw EEG, per-channel quality
-(meaningful only when still), the current move with its confidence, the probabilities, and
-the decoded and cued moves over time.
+`SMOOTH_ALPHA`, `THRESHOLD` and `MIN_DUR_S` trade latency for stability. On p01's two seq2
+blocks (train on one, replay the other), winner-takes-all (`1.0, 0.0, 0.0`) detects 0.94–0.97 of
+cued moves with ~1.7 s median latency and 0.60 step accuracy. But it flickers: 99–125 decoded
+moves for ~29 cued, so sequence accuracy is negative. Smoothing (`0.4, 0.5, 0.75`) detects only
+0.54–0.57 of cued moves at ~3 s latency, with 0.28 step accuracy and 0.57–0.66 sequence accuracy.
+Use winner-takes-all to show the dancer what is decoded right now, and smoothing to read out the
+dance as a sequence. The dashboard shows the raw EEG, per-channel quality (meaningful only when
+still), the decoded move as its avatar from `figures/` (`MOVE_GIFS` in `dance/config.py`: an
+animated GIF, or a still image like rest's), its confidence, the probabilities, and the decoded and cued
+moves over time.
+
+**`--demo`** is continuous decoding laid out for an audience:
+`python -m dance.live --model models/<model>.joblib --demo`. It drops the EEG traces. The
+mirrored computer camera goes top left (`--camera N` picks another camera), and dials go bottom
+left for smoothing, threshold, hold time and update interval. The dials change the decoder while it runs, and
+**Instant** / **Steady** set the two presets above. On macOS, the first run asks to give your
+terminal app camera access.
 
 **Online, `--mode discrete` (the default).** Press Space to start, dance, then press Space
 again to stop. The captured stretch is cut into the same 1.5 s windows as in training and their
